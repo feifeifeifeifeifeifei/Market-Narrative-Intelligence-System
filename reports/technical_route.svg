@@ -75,9 +75,9 @@
   <text class="chip-text" x="1190" y="282">DB</text>
   <path class="connector" d="M 1150 268 L 1169 268"/>
 
-  <rect class="chip" x="82" y="332" width="154" height="38" rx="12"/>
-  <text class="chip-text" x="104" y="356">Local event table</text>
-  <path class="connector-soft" d="M 732 320 C 720 355, 285 350, 240 350"/>
+  <rect class="chip" x="655" y="332" width="154" height="38" rx="12"/>
+  <text class="chip-text" x="677" y="356">Local event table</text>
+  <path class="connector-soft" d="M 732 320 L 732 329"/>
 
   <rect class="box box-query" x="78" y="500" width="210" height="105" rx="14"/>
   <text class="step" x="102" y="530">5. Ask a question</text>
@@ -107,7 +107,7 @@
   <path class="connector" d="M 565 553 L 619 553"/>
   <path class="connector" d="M 842 553 L 897 553"/>
   <path class="connector-soft" d="M 1207 296 C 1207 428, 568 430, 494 498"/>
-  <path class="connector-soft" d="M 159 370 C 160 430, 655 435, 700 498"/>
+  <path class="connector-soft" d="M 732 370 C 732 425, 700 430, 700 498"/>
 
   <rect x="190" y="695" width="940" height="82" rx="16" fill="#ffffff" stroke="#cbd5e1" stroke-width="1.4"/>
   <text x="226" y="727" style="font: 700 16px Arial, sans-serif; fill: #374151;">Result</text>
