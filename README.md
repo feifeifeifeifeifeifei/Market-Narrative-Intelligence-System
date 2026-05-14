@@ -142,6 +142,7 @@ Power BI source tables:
 - `reports/powerbi/tables/data_quality_summary.csv`
 
 Preview screenshots:
+(still beta phase)
 
 ![Narrative Overview](reports/powerbi/screenshots/01_narrative_overview.png)
 
