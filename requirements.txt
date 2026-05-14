@@ -1,0 +1,13 @@
+pandas
+pyarrow
+beautifulsoup4
+pydantic
+python-dotenv
+openai
+tqdm
+chromadb
+duckdb
+matplotlib
+fastapi
+uvicorn
+pytest

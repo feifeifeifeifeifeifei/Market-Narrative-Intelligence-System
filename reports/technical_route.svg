@@ -1,0 +1,116 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1320" height="820" viewBox="0 0 1320 820" role="img" aria-labelledby="title desc">
+  <title id="title">Technical route flowchart</title>
+  <desc id="desc">A flowchart showing how raw posts become cleaned events, narrative labels, vector search results, local analytical joins, and final reports.</desc>
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#374151"/>
+    </marker>
+    <filter id="shadow" x="-10%" y="-20%" width="120%" height="140%">
+      <feDropShadow dx="0" dy="8" stdDeviation="8" flood-color="#111827" flood-opacity="0.10"/>
+    </filter>
+    <style>
+      .canvas { fill: #f8fafc; }
+      .lane { fill: #ffffff; stroke: #d7dee8; stroke-width: 1.5; }
+      .lane-title { font: 700 22px Arial, sans-serif; fill: #111827; }
+      .lane-note { font: 400 14px Arial, sans-serif; fill: #5b6472; }
+      .box { stroke-width: 1.8; rx: 14; filter: url(#shadow); }
+      .box-ingest { fill: #eef7ff; stroke: #6aa8d8; }
+      .box-structure { fill: #f1f8f0; stroke: #7ab77b; }
+      .box-vector { fill: #fff5e8; stroke: #d99b48; }
+      .box-query { fill: #f4f0ff; stroke: #9a83d7; }
+      .box-output { fill: #fff2f5; stroke: #d56b83; }
+      .step { font: 700 18px Arial, sans-serif; fill: #111827; }
+      .data-label { font: 700 13px Arial, sans-serif; fill: #374151; }
+      .data { font: 400 14px Arial, sans-serif; fill: #4b5563; }
+      .connector { stroke: #374151; stroke-width: 2.2; fill: none; marker-end: url(#arrow); }
+      .connector-soft { stroke: #6b7280; stroke-width: 2; fill: none; stroke-dasharray: 7 6; marker-end: url(#arrow); }
+      .chip { fill: #ffffff; stroke: #cbd5e1; stroke-width: 1; }
+      .chip-text { font: 700 13px Arial, sans-serif; fill: #344054; }
+    </style>
+  </defs>
+
+  <rect class="canvas" x="0" y="0" width="1320" height="820"/>
+
+  <text x="54" y="58" style="font: 700 32px Arial, sans-serif; fill: #111827;">Technical Route</text>
+  <text x="54" y="86" style="font: 400 16px Arial, sans-serif; fill: #5b6472;">Local structured analytics and vector search work together through a shared event id.</text>
+
+  <rect class="lane" x="48" y="125" width="1224" height="235" rx="18"/>
+  <text class="lane-title" x="74" y="160">Offline data preparation</text>
+  <text class="lane-note" x="74" y="184">Build a clean, auditable event dataset before retrieval or dashboarding.</text>
+
+  <rect class="lane" x="48" y="405" width="1224" height="260" rx="18"/>
+  <text class="lane-title" x="74" y="440">Query-time analysis</text>
+  <text class="lane-note" x="74" y="464">Use vector search to find similar posts, then use local analytics to calculate the market reaction.</text>
+
+  <rect class="box box-ingest" x="78" y="215" width="210" height="105" rx="14"/>
+  <text class="step" x="102" y="245">1. Clean raw posts</text>
+  <text class="data-label" x="102" y="273">Data produced</text>
+  <text class="data" x="102" y="295">clean text, dates, ids,</text>
+  <text class="data" x="102" y="315">engagement, daily returns</text>
+
+  <rect class="box box-structure" x="345" y="215" width="220" height="105" rx="14"/>
+  <text class="step" x="369" y="245">2. Classify narratives</text>
+  <text class="data-label" x="369" y="273">Data produced</text>
+  <text class="data" x="369" y="295">topic, tone, entities,</text>
+  <text class="data" x="369" y="315">relevance, policy direction</text>
+
+  <rect class="box box-structure" x="622" y="215" width="220" height="105" rx="14"/>
+  <text class="step" x="646" y="245">3. Map assets</text>
+  <text class="data-label" x="646" y="273">Data produced</text>
+  <text class="data" x="646" y="295">selected tickers and</text>
+  <text class="data" x="646" y="315">return fields to compare</text>
+
+  <rect class="box box-vector" x="900" y="215" width="250" height="105" rx="14"/>
+  <text class="step" x="924" y="245">4. Build vector index</text>
+  <text class="data-label" x="924" y="273">Data produced</text>
+  <text class="data" x="924" y="295">text embeddings with ids,</text>
+  <text class="data" x="924" y="315">labels, and metadata</text>
+
+  <path class="connector" d="M 288 268 L 342 268"/>
+  <path class="connector" d="M 565 268 L 619 268"/>
+  <path class="connector" d="M 842 268 L 897 268"/>
+
+  <rect class="chip" x="1172" y="238" width="70" height="58" rx="12"/>
+  <text class="chip-text" x="1191" y="262">Vector</text>
+  <text class="chip-text" x="1190" y="282">DB</text>
+  <path class="connector" d="M 1150 268 L 1169 268"/>
+
+  <rect class="chip" x="82" y="332" width="154" height="38" rx="12"/>
+  <text class="chip-text" x="104" y="356">Local event table</text>
+  <path class="connector-soft" d="M 732 320 C 720 355, 285 350, 240 350"/>
+
+  <rect class="box box-query" x="78" y="500" width="210" height="105" rx="14"/>
+  <text class="step" x="102" y="530">5. Ask a question</text>
+  <text class="data-label" x="102" y="558">Data produced</text>
+  <text class="data" x="102" y="580">validated, redacted</text>
+  <text class="data" x="102" y="600">search query</text>
+
+  <rect class="box box-vector" x="345" y="500" width="220" height="105" rx="14"/>
+  <text class="step" x="369" y="530">6. Retrieve matches</text>
+  <text class="data-label" x="369" y="558">Data produced</text>
+  <text class="data" x="369" y="580">similar event ids and</text>
+  <text class="data" x="369" y="600">similarity scores</text>
+
+  <rect class="box box-ingest" x="622" y="500" width="220" height="105" rx="14"/>
+  <text class="step" x="646" y="530">7. Join locally</text>
+  <text class="data-label" x="646" y="558">Data produced</text>
+  <text class="data" x="646" y="580">matched posts with labels</text>
+  <text class="data" x="646" y="600">and selected returns</text>
+
+  <rect class="box box-output" x="900" y="500" width="250" height="105" rx="14"/>
+  <text class="step" x="924" y="530">8. Generate output</text>
+  <text class="data-label" x="924" y="558">Data produced</text>
+  <text class="data" x="924" y="580">summary, tables, charts,</text>
+  <text class="data" x="924" y="600">and dashboard-ready data</text>
+
+  <path class="connector" d="M 288 553 L 342 553"/>
+  <path class="connector" d="M 565 553 L 619 553"/>
+  <path class="connector" d="M 842 553 L 897 553"/>
+  <path class="connector-soft" d="M 1207 296 C 1207 428, 568 430, 494 498"/>
+  <path class="connector-soft" d="M 159 370 C 160 430, 655 435, 700 498"/>
+
+  <rect x="190" y="695" width="940" height="82" rx="16" fill="#ffffff" stroke="#cbd5e1" stroke-width="1.4"/>
+  <text x="226" y="727" style="font: 700 16px Arial, sans-serif; fill: #374151;">Result</text>
+  <text x="300" y="727" style="font: 400 15px Arial, sans-serif; fill: #5b6472;">The vector database finds similar events; the local analytical database explains their market context.</text>
+  <text x="300" y="752" style="font: 400 15px Arial, sans-serif; fill: #5b6472;">Final output: matched posts, selected ticker returns, summary tables, charts, and dashboard-ready data.</text>
+</svg>
