@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import importlib.util
 import json
 import os
 import re
@@ -35,6 +36,11 @@ CLASSIFICATION_COLUMNS = [
 ]
 MAX_CLASSIFICATION_TEXT_CHARS = 5000
 
+
+class FatalClassificationError(RuntimeError):
+    """Unrecoverable LLM configuration or account error."""
+
+
 TOPIC_LABELS = [
     "tariff_trade",
     "oil_energy",
@@ -64,6 +70,37 @@ MARKET_RELEVANCE_LABELS = ["high", "medium", "low"]
 POLICY_DIRECTION_LABELS = ["escalation", "deescalation", "easing", "uncertainty", "neutral"]
 
 
+CLASSIFICATION_GUIDE = """
+Decision style:
+- Choose a specific topic when the post clearly supports one; use other for vague, ceremonial, or personal posts.
+- Use neutral tone when the post is informational or too short to infer praise, attack, defense, threat, or promotion.
+- Use low market_relevance for personal, ceremonial, sports/fitness, memorial, or generic political posts with no plausible market channel.
+- Use neutral policy_direction for ceremonial actions, transparency/file releases, fitness/awareness programs, praise, condolences, or generic campaign posts.
+
+Topic hints:
+- tariff_trade=tariffs/trade deals/imports/exports; oil_energy=oil/gas/drilling/OPEC/energy prices.
+- war_defense=war/military/NATO/Iran/Russia/Ukraine/Israel; healthcare_pharma=healthcare/drug prices/FDA/pharma.
+- rates_usd=Fed/rates/inflation/dollar/Treasury/deficits; crypto=Bitcoin/crypto/digital assets.
+- broad_market=stocks/economy/jobs/GDP/recession/business sentiment; immigration_border=border/deportation/asylum.
+- legal_court=lawsuits/indictments/trials/judges/Supreme Court/DOJ/FBI; election_politics=campaigns/polls/voting/endorsements.
+- self_promotion=rallies/media appearances/fundraising/personal brand when no stronger issue topic fits.
+
+Market relevance guide:
+- high: direct macro/market/sector signal, policy threat/action, geopolitical shock, major legal/election risk, or named market-sensitive entities.
+- medium: indirect but plausible market channel through policy, politics, regulation, trade, legal risk, or sentiment.
+- low: personal, ceremonial, or purely social content with no plausible market channel.
+
+Policy direction guide:
+- escalation: threats, new restrictions, tariffs, sanctions, military/legal pressure, crackdowns, or confrontation.
+- deescalation: peace, deals, compromise, removed threats, reduced conflict.
+- easing: tax cuts, deregulation, lower rates, subsidies, looser policy, pro-business relief.
+- uncertainty: unclear, mixed, conditional, speculative, or contradictory policy direction.
+- neutral: no policy/conflict direction.
+
+Entities should include named countries, institutions, companies, people, sectors, commodities, or assets explicitly mentioned.
+""".strip()
+
+
 def build_classification_messages(cleaned_text: str, strict: bool = False) -> list[dict[str, str]]:
     strict_instruction = (
         "Your previous response was invalid. Return only valid JSON with exactly the required keys. "
@@ -74,7 +111,8 @@ def build_classification_messages(cleaned_text: str, strict: bool = False) -> li
 
     system_prompt = (
         "You classify Truth Social posts into a small market narrative schema. "
-        "Use only the allowed labels. Do not choose tickers, write SQL, or analyze market prices."
+        "Use only the allowed labels. Do not choose tickers, write SQL, or analyze market prices. "
+        "Prefer specific labels when supported, but use neutral, low, or other for vague or ceremonial posts."
     )
     user_prompt = f"""
 Classify this post.
@@ -83,6 +121,9 @@ Allowed primary_topic labels: {", ".join(TOPIC_LABELS)}
 Allowed tone labels: {", ".join(TONE_LABELS)}
 Allowed market_relevance labels: {", ".join(MARKET_RELEVANCE_LABELS)}
 Allowed policy_direction labels: {", ".join(POLICY_DIRECTION_LABELS)}
+
+Classification guide:
+{CLASSIFICATION_GUIDE}
 
 Output schema:
 {{
@@ -189,6 +230,8 @@ def classify_text(
             return validate_classification(llm(messages)), "ok"
         except (json.JSONDecodeError, ValidationError, TypeError, ValueError):
             continue
+        except FatalClassificationError:
+            raise
         except Exception:
             return fallback_classification(), "llm_error"
 
@@ -371,34 +414,95 @@ def create_openai_llm(model: str = DEFAULT_CLASSIFICATION_MODEL) -> LLMCallable 
     effective_model = os.getenv("OPENAI_CLASSIFICATION_MODEL", model)
 
     try:
-        from openai import APIConnectionError, APIError, APITimeoutError, OpenAI, RateLimitError
+        from openai import (
+            APIConnectionError,
+            APIError,
+            APITimeoutError,
+            BadRequestError,
+            OpenAI,
+            RateLimitError,
+        )
     except ImportError:
         return None
 
     client = OpenAI(api_key=api_key)
     retry_exceptions = (RateLimitError, APITimeoutError, APIConnectionError, APIError)
 
+    def describe_openai_error(error: Exception) -> str:
+        body = getattr(error, "body", None)
+        if isinstance(body, dict):
+            error_body = body.get("error", body)
+            message = error_body.get("message")
+            code = error_body.get("code")
+            if message and code:
+                return f"{code}: {message}"
+            if message:
+                return str(message)
+        return str(error)
+
+    def is_insufficient_quota_error(error: Exception) -> bool:
+        body = getattr(error, "body", None)
+        if isinstance(body, dict):
+            error_body = body.get("error", body)
+            code = str(error_body.get("code", "")).lower()
+            message = str(error_body.get("message", "")).lower()
+            return code == "insufficient_quota" or "insufficient quota" in message
+        return "insufficient_quota" in str(error).lower()
+
     def call_openai(messages: list[dict[str, str]]) -> str:
         for attempt in range(4):
             try:
+                request_kwargs: dict[str, Any] = {
+                    "model": effective_model,
+                    "messages": messages,
+                    "response_format": {"type": "json_object"},
+                    "timeout": 30,
+                }
+                if supports_zero_temperature(effective_model):
+                    request_kwargs["temperature"] = 0
                 response = client.chat.completions.create(
-                    model=effective_model,
-                    messages=messages,
-                    temperature=0,
-                    response_format={"type": "json_object"},
-                    timeout=30,
+                    **request_kwargs,
                 )
                 content = response.choices[0].message.content
                 if content is None:
                     raise ValueError("OpenAI returned an empty classification response.")
                 return content
-            except retry_exceptions:
+            except BadRequestError as error:
+                detail = describe_openai_error(error)
+                raise FatalClassificationError(
+                    f"OpenAI classification request is invalid: {detail}"
+                ) from error
+            except retry_exceptions as error:
+                if is_insufficient_quota_error(error):
+                    detail = describe_openai_error(error)
+                    raise FatalClassificationError(
+                        f"OpenAI classification cannot continue because quota is unavailable: {detail}"
+                    ) from error
                 if attempt == 3:
                     raise
                 time.sleep(2**attempt)
         raise RuntimeError("OpenAI classification failed after retries.")
 
     return call_openai
+
+
+def supports_zero_temperature(model: str) -> bool:
+    return not model.startswith("gpt-5")
+
+
+def openai_llm_unavailable_reason() -> str:
+    try:
+        from dotenv import load_dotenv
+
+        load_dotenv()
+    except ImportError:
+        pass
+
+    if not os.getenv("OPENAI_API_KEY"):
+        return "OPENAI_API_KEY is not set."
+    if importlib.util.find_spec("openai") is None:
+        return "the openai package is not installed in this Python environment."
+    return "the OpenAI client could not be initialized."
 
 
 def run_classification(
@@ -413,6 +517,12 @@ def run_classification(
 ) -> pd.DataFrame:
     df = pd.read_parquet(input_path)
     llm = None if fallback_only else create_openai_llm(model)
+    if llm is None and not fallback_only:
+        reason = openai_llm_unavailable_reason()
+        raise RuntimeError(
+            f"OpenAI live classification is unavailable: {reason} "
+            "Install dependencies and set OPENAI_API_KEY, or pass --fallback-only for an intentional fallback run."
+        )
     classified_df = classify_dataframe_incremental(
         df,
         llm=llm,
@@ -444,16 +554,19 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> None:
     args = parse_args()
-    classified_df = run_classification(
-        input_path=args.input_path,
-        output_path=args.output_path,
-        model=args.model,
-        limit=args.limit,
-        fallback_only=args.fallback_only,
-        checkpoint_every=args.checkpoint_every,
-        resume=args.resume,
-        progress=not args.no_progress,
-    )
+    try:
+        classified_df = run_classification(
+            input_path=args.input_path,
+            output_path=args.output_path,
+            model=args.model,
+            limit=args.limit,
+            fallback_only=args.fallback_only,
+            checkpoint_every=args.checkpoint_every,
+            resume=args.resume,
+            progress=not args.no_progress,
+        )
+    except FatalClassificationError as error:
+        raise SystemExit(f"Classification stopped: {error}") from error
     fallback_count = int(classified_df["classification_fallback"].sum())
     print(
         f"Wrote {len(classified_df):,} rows to {args.output_path} "

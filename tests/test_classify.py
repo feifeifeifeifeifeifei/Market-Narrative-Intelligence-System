@@ -1,10 +1,15 @@
 import pandas as pd
 import pytest
+import src.classify as classify_module
 
 from src.classify import (
+    FatalClassificationError,
+    build_classification_messages,
     classify_dataframe,
     classify_dataframe_incremental,
+    run_classification,
     classify_text,
+    supports_zero_temperature,
     validate_classification,
 )
 
@@ -24,6 +29,22 @@ def test_validate_classification_accepts_valid_json() -> None:
     )
 
     assert result.primary_topic.value == "tariff_trade"
+
+
+def test_classification_prompt_balances_specific_and_conservative_labels() -> None:
+    messages = build_classification_messages("China tariffs and Fed policy")
+    prompt = "\n".join(message["content"] for message in messages)
+
+    assert "Prefer specific labels when supported" in prompt
+    assert "use other for vague, ceremonial, or personal posts" in prompt
+    assert "Use low market_relevance for" in prompt
+    assert "fitness/awareness programs" in prompt
+    assert "tariff_trade=tariffs" in prompt
+
+
+def test_gpt5_models_use_default_temperature() -> None:
+    assert supports_zero_temperature("gpt-4o-mini") is True
+    assert supports_zero_temperature("gpt-5-mini") is False
 
 
 def test_validate_classification_accepts_fenced_json_with_prose() -> None:
@@ -112,6 +133,14 @@ def test_classify_text_falls_back_when_llm_raises() -> None:
     assert status == "llm_error"
 
 
+def test_classify_text_propagates_fatal_llm_errors() -> None:
+    def broken_llm(messages: list[dict[str, str]]) -> str:
+        raise FatalClassificationError("quota unavailable")
+
+    with pytest.raises(FatalClassificationError, match="quota unavailable"):
+        classify_text("China tariffs", llm=broken_llm)
+
+
 def test_classify_dataframe_writes_expected_columns() -> None:
     df = pd.DataFrame({"post_id": ["1"], "cleaned_text": [""]})
 
@@ -164,3 +193,30 @@ def test_classify_dataframe_incremental_resumes_existing_output(tmp_path) -> Non
 
     assert result.loc[0, "primary_topic"] == "crypto"
     assert result.loc[1, "classification_status"] == "no_llm"
+
+
+def test_run_classification_requires_live_llm_unless_fallback_only(tmp_path, monkeypatch) -> None:
+    input_path = tmp_path / "cleaned.parquet"
+    output_path = tmp_path / "classified.parquet"
+    pd.DataFrame({"post_id": ["1"], "cleaned_text": ["China tariffs"]}).to_parquet(
+        input_path,
+        index=False,
+    )
+    monkeypatch.setattr(classify_module, "create_openai_llm", lambda model: None)
+    monkeypatch.setattr(
+        classify_module,
+        "openai_llm_unavailable_reason",
+        lambda: "test unavailable.",
+    )
+
+    with pytest.raises(RuntimeError, match="OpenAI live classification is unavailable"):
+        run_classification(input_path=input_path, output_path=output_path)
+
+    result = run_classification(
+        input_path=input_path,
+        output_path=output_path,
+        fallback_only=True,
+        progress=False,
+    )
+
+    assert result.loc[0, "classification_status"] == "no_llm"

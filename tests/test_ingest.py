@@ -4,7 +4,7 @@ import pytest
 from src.ingest import (
     category_columns,
     clean_events,
-    drop_empty_non_media_posts,
+    drop_empty_text_posts,
     open_close_columns,
     parse_datetime_column,
 )
@@ -19,7 +19,41 @@ def test_open_close_columns_excludes_intraday_market_columns() -> None:
 def test_category_columns_only_keeps_known_classification_columns() -> None:
     columns = pd.Index(["cat_attacking_individual", "cat_egory_future", "gdelt_military"])
 
-    assert category_columns(columns) == ["cat_attacking_individual", "gdelt_military"]
+    assert category_columns(columns) == []
+
+
+def test_clean_events_excludes_raw_auxiliary_columns() -> None:
+    raw = pd.DataFrame(
+        {
+            "post_id": ["1"],
+            "datetime": ["2026-01-01T00:00:00Z"],
+            "date": ["2026-01-01"],
+            "text": ["hello"],
+            "content_html": [""],
+            "has_media": [False],
+            "replies_count": [0],
+            "reblogs_count": [0],
+            "favourites_count": [0],
+            "image_alt_text": ["alt"],
+            "time_eastern": ["09:45:00"],
+            "during_market_hours": [True],
+            "market_period": ["during_market"],
+            "cat_attacking_individual": [1],
+            "gdelt_military": [10],
+        }
+    )
+
+    result = clean_events(raw, tickers=["qqq"])
+
+    excluded = {
+        "image_alt_text",
+        "time_eastern",
+        "during_market_hours",
+        "market_period",
+        "cat_attacking_individual",
+        "gdelt_military",
+    }
+    assert excluded.isdisjoint(result.columns)
 
 
 def test_parse_datetime_column_localizes_naive_values_as_new_york() -> None:
@@ -38,10 +72,17 @@ def test_parse_datetime_column_warns_when_dst_ambiguity_becomes_nat() -> None:
     assert pd.isna(parsed.iloc[0])
 
 
-def test_drop_empty_non_media_posts_handles_missing_optional_columns() -> None:
-    raw = pd.DataFrame({"post_id": ["1", "2"], "text": ["", "hello"]})
+def test_drop_empty_text_posts_removes_blank_text_rows() -> None:
+    raw = pd.DataFrame(
+        {
+            "post_id": ["1", "2", "3", "4"],
+            "text": ["", "hello", None, "   "],
+            "content_html": ["<p>fallback</p>", "", "<p>fallback</p>", ""],
+            "has_media": [True, False, True, True],
+        }
+    )
 
-    result = drop_empty_non_media_posts(raw)
+    result = drop_empty_text_posts(raw)
 
     assert result["post_id"].tolist() == ["2"]
 

@@ -51,23 +51,14 @@ def bool_series(index: pd.Index, value: bool) -> pd.Series:
     return pd.Series(value, index=index)
 
 
-def drop_empty_non_media_posts(df: pd.DataFrame) -> pd.DataFrame:
-    text_empty = (
-        df["text"].fillna("").astype(str).str.strip().eq("")
-        if "text" in df.columns
-        else bool_series(df.index, True)
-    )
-    html_empty = (
-        df["content_html"].fillna("").astype(str).str.strip().eq("")
-        if "content_html" in df.columns
-        else bool_series(df.index, True)
-    )
-    has_media = (
-        df["has_media"].fillna(False).astype(bool)
-        if "has_media" in df.columns
-        else bool_series(df.index, False)
-    )
-    return df.loc[~(text_empty & html_empty & ~has_media)].copy()
+def text_empty_mask(df: pd.DataFrame) -> pd.Series:
+    if "text" not in df.columns:
+        return bool_series(df.index, True)
+    return df["text"].fillna("").astype(str).str.strip().eq("")
+
+
+def drop_empty_text_posts(df: pd.DataFrame) -> pd.DataFrame:
+    return df.loc[~text_empty_mask(df)].copy()
 
 
 def parse_datetime_column(values: pd.Series) -> pd.Series:
@@ -119,7 +110,7 @@ def clean_events(raw_df: pd.DataFrame, tickers: list[str] | None = None) -> pd.D
     selected_columns = list(dict.fromkeys(selected_columns))
     df = raw_df.loc[:, selected_columns].copy()
 
-    df = drop_empty_non_media_posts(df)
+    df = drop_empty_text_posts(df)
     df["post_id"] = df["post_id"].astype(str)
     if "datetime" in df.columns:
         df["datetime"] = parse_datetime_column(df["datetime"])

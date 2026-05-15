@@ -8,9 +8,6 @@ def test_prepare_powerbi_export_includes_selected_tickers_and_core_fields() -> N
         {
             "post_id": ["1"],
             "date": pd.to_datetime(["2026-01-01"]),
-            "time_eastern": ["09:45:00"],
-            "during_market_hours": [True],
-            "market_period": ["market_hours"],
             "cleaned_text": ["China tariff threat"],
             "primary_topic": ["tariff_trade"],
             "tone": ["threatening"],
@@ -29,7 +26,6 @@ def test_prepare_powerbi_export_includes_selected_tickers_and_core_fields() -> N
     )
     assert "post_id" in result.columns
     assert "cleaned_text" in result.columns
-    assert "during_market_hours" in result.columns
     assert "policy_direction" in result.columns
 
 
@@ -45,7 +41,6 @@ def test_run_powerbi_export_writes_csv_and_updates_classified_parquet(tmp_path) 
             "tone": ["neutral"],
             "market_relevance": ["medium"],
             "policy_direction": ["neutral"],
-            "during_market_hours": [False],
         }
     )
     df.to_parquet(input_path, index=False)

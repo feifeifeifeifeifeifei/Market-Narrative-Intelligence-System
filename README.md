@@ -32,7 +32,8 @@ python -m src.ingest \
 The ETL:
 
 - enforces `post_id` presence and uniqueness
-- keeps core post, engagement, media, category, and GDELT fields
+- drops rows whose raw `text` is blank
+- keeps core post, engagement, and media fields
 - keeps only ticker `open` and `close` price columns from the market data
 - creates `cleaned_text`
 - adds engagement and text features
