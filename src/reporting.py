@@ -321,8 +321,14 @@ def render_market_reaction(df: pd.DataFrame, tables: dict[str, pd.DataFrame], pl
         axes[1].text(0.05, 0.8, "No selected ticker rows available.", fontsize=12)
         axes[1].axis("off")
     else:
-        selected.head(12).plot(kind="bar", x="ticker", y="post_count", ax=axes[1], color="#dd6b20", legend=False)
-        axes[1].set_title("Selected Tickers By Topic")
+        selected_totals = (
+            selected.groupby("ticker", as_index=False)["post_count"]
+            .sum()
+            .sort_values("post_count", ascending=False)
+            .head(12)
+        )
+        selected_totals.plot(kind="bar", x="ticker", y="post_count", ax=axes[1], color="#dd6b20", legend=False)
+        axes[1].set_title("Selected Ticker Counts")
         axes[1].tick_params(axis="x", rotation=35)
     fig.tight_layout()
     fig.savefig(path, dpi=160)
