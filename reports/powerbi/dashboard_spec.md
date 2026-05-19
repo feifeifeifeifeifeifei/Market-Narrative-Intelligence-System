@@ -21,5 +21,6 @@
 
 ## Current Data Note
 
-The local classified artifact is fallback-only unless live LLM classification has been run with `OPENAI_API_KEY`.
-Current topic/tone/policy-direction distributions should therefore be interpreted as pipeline validation, not final analysis.
+The dashboard preview tables use rows with `classification_status = ok` for narrative,
+ticker, and market-reaction views, while the Data Quality page reports the full classified
+artifact including empty-text and failed LLM rows.

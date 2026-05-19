@@ -175,6 +175,12 @@ def data_quality_summary(df: pd.DataFrame) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
+def narrative_analysis_events(df: pd.DataFrame) -> pd.DataFrame:
+    if "classification_status" not in df.columns:
+        return df
+    return df.loc[df["classification_status"] == "ok"].copy()
+
+
 def safe_ratio(numerator: int, denominator: int) -> float | None:
     if denominator == 0:
         return None
@@ -214,14 +220,15 @@ def build_report_tables(
     query: str = "China tariff threats",
     embedding_provider: str = "hashing",
 ) -> dict[str, pd.DataFrame]:
+    analysis_df = narrative_analysis_events(df)
     return {
-        "narrative_topic_counts": narrative_topic_counts(df),
+        "narrative_topic_counts": narrative_topic_counts(analysis_df),
         "posts_over_time_weekly": posts_over_time(df),
-        "tone_distribution": tone_distribution(df),
-        "policy_direction_distribution": policy_direction_distribution(df),
-        "market_reaction_by_topic_ticker": market_reaction_by_topic_ticker(df),
-        "selected_ticker_distribution": selected_ticker_distribution(df),
-        "high_engagement_posts": high_engagement_posts(df),
+        "tone_distribution": tone_distribution(analysis_df),
+        "policy_direction_distribution": policy_direction_distribution(analysis_df),
+        "market_reaction_by_topic_ticker": market_reaction_by_topic_ticker(analysis_df),
+        "selected_ticker_distribution": selected_ticker_distribution(analysis_df),
+        "high_engagement_posts": high_engagement_posts(analysis_df),
         "data_quality_summary": data_quality_summary(df),
         "similar_event_search_output": similar_event_sample(query, top_k=20, embedding_provider=embedding_provider),
     }
@@ -262,7 +269,7 @@ def render_narrative_overview(df: pd.DataFrame, tables: dict[str, pd.DataFrame],
     fig, axes = plt.subplots(2, 2, figsize=(14, 8))
     fig.suptitle("Narrative Overview", fontsize=18, fontweight="bold")
     axes[0, 0].bar(topic_counts["primary_topic"].head(8), topic_counts["post_count"].head(8), color="#2b6cb0")
-    axes[0, 0].set_title("Post Count By Topic")
+    axes[0, 0].set_title("Post Count By Topic (OK Classifications)")
     axes[0, 0].tick_params(axis="x", rotation=35)
     if weekly.empty:
         axes[0, 1].text(0.05, 0.8, "No dated posts available.", fontsize=12)
@@ -274,15 +281,17 @@ def render_narrative_overview(df: pd.DataFrame, tables: dict[str, pd.DataFrame],
         axes[1, 0].text(0.05, 0.8, "No tone rows available.", fontsize=12)
     else:
         tone_totals.plot(kind="bar", ax=axes[1, 0], color="#805ad5", legend=False)
-    axes[1, 0].set_title("Tone Distribution")
+    axes[1, 0].set_title("Tone Distribution (OK Classifications)")
     axes[1, 0].tick_params(axis="x", rotation=35)
     axes[1, 1].axis("off")
     date_range = date_range_text(df)
     fallback_rate = fallback_rate_text(tables["data_quality_summary"])
+    ok_count = quality_metric_value(tables["data_quality_summary"], "classification_ok_count")
     axes[1, 1].text(
         0,
         0.8,
-        f"Posts: {len(df):,}\nDate range: {date_range}\nClassification fallback rate: {fallback_rate}",
+        f"Posts: {len(df):,}\nValidated LLM rows: {ok_count:,.0f}\n"
+        f"Date range: {date_range}\nClassification fallback rate: {fallback_rate}",
         fontsize=13,
         va="top",
     )
@@ -406,6 +415,13 @@ def fallback_rate_text(quality: pd.DataFrame) -> str:
     return f"{float(row.iloc[0]):.1%}"
 
 
+def quality_metric_value(quality: pd.DataFrame, metric: str) -> float:
+    row = quality.loc[quality["metric"] == metric, "value"]
+    if row.empty or pd.isna(row.iloc[0]):
+        return 0.0
+    return float(row.iloc[0])
+
+
 def write_powerbi_spec() -> Path:
     path = POWERBI_REPORT_DIR / "dashboard_spec.md"
     path.write_text(
@@ -432,8 +448,9 @@ def write_powerbi_spec() -> Path:
 
 ## Current Data Note
 
-The local classified artifact is fallback-only unless live LLM classification has been run with `OPENAI_API_KEY`.
-Current topic/tone/policy-direction distributions should therefore be interpreted as pipeline validation, not final analysis.
+The dashboard preview tables use rows with `classification_status = ok` for narrative,
+ticker, and market-reaction views, while the Data Quality page reports the full classified
+artifact including empty-text and failed LLM rows.
 """,
         encoding="utf-8",
     )

@@ -4,12 +4,15 @@ import src.classify as classify_module
 
 from src.classify import (
     FatalClassificationError,
+    build_batch_classification_messages,
     build_classification_messages,
     classify_dataframe,
     classify_dataframe_incremental,
     run_classification,
+    classify_text_batch,
     classify_text,
     supports_zero_temperature,
+    validate_batch_classification,
     validate_classification,
 )
 
@@ -40,6 +43,18 @@ def test_classification_prompt_balances_specific_and_conservative_labels() -> No
     assert "Use low market_relevance for" in prompt
     assert "fitness/awareness programs" in prompt
     assert "tariff_trade=tariffs" in prompt
+
+
+def test_batch_classification_prompt_uses_item_ids() -> None:
+    messages = build_batch_classification_messages(
+        [("0", "China tariffs"), ("1", "Stock market record high")]
+    )
+    prompt = "\n".join(message["content"] for message in messages)
+
+    assert '"classifications"' in prompt
+    assert '"item_id": "same item_id from input"' in prompt
+    assert "item_id: 0" in prompt
+    assert "item_id: 1" in prompt
 
 
 def test_gpt5_models_use_default_temperature() -> None:
@@ -87,6 +102,39 @@ def test_validate_classification_extracts_first_balanced_json_object() -> None:
     assert result.primary_topic.value == "rates_usd"
 
 
+def test_validate_batch_classification_accepts_valid_json() -> None:
+    result = validate_batch_classification(
+        """
+        {
+          "classifications": [
+            {
+              "item_id": "0",
+              "primary_topic": "tariff_trade",
+              "tone": "threatening",
+              "entities": ["China", "Tariffs"],
+              "market_relevance": "high",
+              "policy_direction": "escalation",
+              "reason": "The post discusses tariff threats involving China."
+            },
+            {
+              "item_id": "1",
+              "primary_topic": "broad_market",
+              "tone": "praising",
+              "entities": ["Stock Market"],
+              "market_relevance": "high",
+              "policy_direction": "neutral",
+              "reason": "The post praises stock market performance."
+            }
+          ]
+        }
+        """,
+        expected_item_ids={"0", "1"},
+    )
+
+    assert result["0"].primary_topic.value == "tariff_trade"
+    assert result["1"].primary_topic.value == "broad_market"
+
+
 def test_classify_text_retries_once_then_succeeds() -> None:
     responses = iter(
         [
@@ -111,6 +159,51 @@ def test_classify_text_retries_once_then_succeeds() -> None:
 
     assert classification.primary_topic.value == "oil_energy"
     assert status == "ok"
+
+
+def test_classify_text_batch_classifies_multiple_posts_in_one_call() -> None:
+    calls = []
+
+    def llm(messages: list[dict[str, str]]) -> str:
+        calls.append(messages)
+        return """
+        {
+          "classifications": [
+            {
+              "item_id": "0",
+              "primary_topic": "tariff_trade",
+              "tone": "threatening",
+              "entities": ["China"],
+              "market_relevance": "high",
+              "policy_direction": "escalation",
+              "reason": "The post references China tariffs."
+            },
+            {
+              "item_id": "1",
+              "primary_topic": "broad_market",
+              "tone": "praising",
+              "entities": ["Stock Market"],
+              "market_relevance": "high",
+              "policy_direction": "neutral",
+              "reason": "The post references market performance."
+            }
+          ]
+        }
+        """
+
+    results = classify_text_batch(["China tariffs", "Stock market high"], llm=llm)
+
+    assert len(calls) == 1
+    assert [status for _, status in results] == ["ok", "ok"]
+    assert results[0][0].primary_topic.value == "tariff_trade"
+    assert results[1][0].primary_topic.value == "broad_market"
+
+
+def test_classify_text_batch_handles_empty_text_without_llm() -> None:
+    results = classify_text_batch([""], llm=lambda messages: pytest.fail("llm should not be called"))
+
+    assert results[0][0].primary_topic.value == "other"
+    assert results[0][1] == "empty_text"
 
 
 def test_classify_text_falls_back_after_invalid_responses() -> None:

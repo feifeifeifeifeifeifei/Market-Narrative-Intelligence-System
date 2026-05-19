@@ -21,6 +21,23 @@ Step outputs:
 - Retrieve matches -> similar event ids with similarity scores.
 - Join and summarize -> similar posts, selected ticker returns, summary tables, charts, and dashboard-ready data.
 
+## Data Shape
+
+The project keeps the dataset as row-level post events. The full files contain many ticker and return columns, so the table below shows the main column groups rather than every field.
+Small 20-row Parquet samples are included under `data-sample/` so readers can inspect representative schemas without downloading the full local datasets. These samples filter out rows with blank key text fields; classified samples use successful `classification_status = ok` rows.
+
+| Stage | File / Store | Approx. Shape | Main Fields | Purpose |
+| --- | --- | ---: | --- | --- |
+| Raw posts + market data | `data/raw/trump_truth_social.parquet` sample: `data-sample/trump_truth_social_sample.parquet` | source dataset | `post_id`, `datetime`, `text`, `content_html`, engagement counts, media/link fields, ticker open/close prices, ... | Original post and market-price source. |
+| Cleaned events | `data/processed/cleaned_events.parquet` sample: `data-sample/cleaned_events_sample.parquet` | `26,997 x 75` | `post_id`, normalized `datetime/date/time`, `cleaned_text`, `total_engagement`, `text_length`, `has_url`, `<ticker>_open`, `<ticker>_close`, `<ticker>_daily_return`, ... | Canonical analytical event table after ETL. |
+| Classified events | `data/processed/classified_events.parquet` sample: `data-sample/classified_events_sample.parquet` | `26,997 x 86` | all cleaned event fields plus `primary_topic`, `tone`, `entities`, `market_relevance`, `policy_direction`, `classification_reason`, `classification_status`, `selected_tickers`, `selected_return_columns` | Main local fact table used by DuckDB, API analysis, and Power BI export. |
+| Power BI export | `data/processed/powerbi_export.csv` | dashboard subset | ids, dates, `cleaned_text`, engagement fields, classification fields, selected tickers, selected return columns, daily returns, ... | Flattened CSV for Power BI and static dashboard previews. |
+| Vector index | `chroma_db/market_narrative_posts` | non-empty text rows | document id = `post_id`, document = `cleaned_text`, metadata = date, topic, tone, entities, market relevance, policy direction, president flag | Retrieval layer for semantic search and similar-event analysis. |
+
+See `data-sample/README.md` for the exact sample files, including the `classified_events_gpt5mini_full` artifact before ticker-selection enrichment.
+
+The LLM does not see the full dataframe. During classification, only `cleaned_text` is sent to the model, in batches of 10 posts. During retrieval, ChromaDB stores only the text embedding plus lightweight metadata; DuckDB later joins the retrieved `post_id`s back to `classified_events.parquet` to recover the full structured row and market-return columns.
+
 ## Run the ETL
 
 ```bash
@@ -57,7 +74,8 @@ python -m pytest -q
 python -m src.classify \
   --input-path data/processed/cleaned_events.parquet \
   --output-path data/processed/classified_events.parquet \
-  --checkpoint-every 1000
+  --batch-size 10 \
+  --checkpoint-every 100
 ```
 
 Set `OPENAI_API_KEY` in `.env` or your shell before running live LLM classification. For offline development or review:
@@ -66,7 +84,7 @@ Set `OPENAI_API_KEY` in `.env` or your shell before running live LLM classificat
 python -m src.classify --fallback-only
 ```
 
-The classifier validates every LLM response with Pydantic, retries once with a stricter prompt when validation fails, retries transient OpenAI API errors with backoff, checkpoints progress, and can resume an interrupted run:
+The classifier sends posts in batches of 10 by default, validates every LLM response with Pydantic, retries once with a stricter prompt when validation fails, retries transient OpenAI API errors with backoff, checkpoints progress, and can resume an interrupted run:
 
 ```bash
 python -m src.classify --resume
@@ -95,6 +113,15 @@ python -m src.build_chroma --embedding-provider hashing
 ```
 
 The build step indexes non-empty `cleaned_text` values into the `market_narrative_posts` collection, using `post_id` as the Chroma document id and storing date, datetime, topic, tone, entities, market relevance, policy direction, and president metadata. The `hashing` provider is a deterministic local fallback for development and tests; use OpenAI embeddings for real semantic quality.
+
+Embedding and retrieval flow:
+
+1. `src.embeddings.create_embedding_provider(...)` chooses either OpenAI embeddings (`text-embedding-3-small` by default) or a deterministic local hashing embedding.
+2. `src.build_chroma.build_chroma_collection(...)` embeds each non-empty `cleaned_text` and upserts it into ChromaDB with `post_id` as the stable document id.
+3. `src.semantic_search.search_similar_posts(...)` embeds the user's query with the same provider, checks that it matches the provider used to build the collection, and returns top-k nearest posts with similarity scores.
+4. `src.analytics.analyze_similar_events(...)` uses those retrieved `post_id`s to join back to `classified_events.parquet`, then summarizes topics, selected tickers, similar posts, and daily open-to-close returns.
+
+The local hashing embedding is useful for deterministic tests and offline demos, but it is lexical rather than semantic. For better conceptual matching, rebuild the collection with OpenAI embeddings and use the same provider at query time.
 
 Use OpenAI embeddings when `OPENAI_API_KEY` is configured:
 
@@ -142,14 +169,13 @@ Power BI source tables:
 - `reports/powerbi/tables/similar_event_search_output.csv`
 - `reports/powerbi/tables/data_quality_summary.csv`
 
-Preview screenshots:
-(still beta phase)
+Preview screenshots generated from the current `gpt-5-mini` full-run classification artifact.
+Narrative, ticker, and market-reaction views use rows where `classification_status = ok`;
+the Data Quality view reports the full classified artifact, including empty-text and failed LLM rows.
 
 ![Narrative Overview](reports/powerbi/screenshots/01_narrative_overview.png)
 
 ![Market Reaction](reports/powerbi/screenshots/02_market_reaction.png)
-
-![Similar Event Search](reports/powerbi/screenshots/03_similar_event_search.png)
 
 ![Data Quality](reports/powerbi/screenshots/04_data_quality.png)
 
@@ -157,7 +183,7 @@ Dashboard notes:
 
 - Specification: `reports/powerbi/dashboard_spec.md`
 - Resume bullets: `reports/resume_bullets.md`
-- Current local classified data is fallback-only unless live LLM classification has been run with `OPENAI_API_KEY`, so topic/tone/policy-direction charts currently validate the pipeline rather than final narrative findings.
+- Current local classified data contains 21,188 validated LLM classifications out of 26,997 total rows; remaining fallback rows are primarily empty cleaned text, plus a small number of failed LLM batches.
 
 ## Run API And Frontend
 

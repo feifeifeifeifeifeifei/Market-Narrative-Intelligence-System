@@ -35,6 +35,7 @@ CLASSIFICATION_COLUMNS = [
     "classification_text_truncated",
 ]
 MAX_CLASSIFICATION_TEXT_CHARS = 5000
+DEFAULT_CLASSIFICATION_BATCH_SIZE = 10
 
 
 class FatalClassificationError(RuntimeError):
@@ -147,6 +148,70 @@ Post:
     ]
 
 
+def build_batch_classification_messages(
+    posts: list[tuple[str, str]],
+    strict: bool = False,
+) -> list[dict[str, str]]:
+    strict_instruction = (
+        "Your previous response was invalid. Return only valid JSON with exactly one classification "
+        "for every input item_id. Do not include markdown, commentary, code, SQL, or extra fields."
+        if strict
+        else "Return only valid JSON. Do not include markdown or commentary."
+    )
+
+    system_prompt = (
+        "You classify Truth Social posts into a small market narrative schema. "
+        "Use only the allowed labels. Do not choose tickers, write SQL, or analyze market prices. "
+        "Classify each post independently. Prefer specific labels when supported, but use neutral, "
+        "low, or other for vague or ceremonial posts."
+    )
+    post_blocks = "\n\n".join(
+        f"item_id: {item_id}\ntext: {text[:MAX_CLASSIFICATION_TEXT_CHARS]}"
+        for item_id, text in posts
+    )
+    user_prompt = f"""
+Classify each post below.
+
+Allowed primary_topic labels: {", ".join(TOPIC_LABELS)}
+Allowed tone labels: {", ".join(TONE_LABELS)}
+Allowed market_relevance labels: {", ".join(MARKET_RELEVANCE_LABELS)}
+Allowed policy_direction labels: {", ".join(POLICY_DIRECTION_LABELS)}
+
+Classification guide:
+{CLASSIFICATION_GUIDE}
+
+Output schema:
+{{
+  "classifications": [
+    {{
+      "item_id": "same item_id from input",
+      "primary_topic": "one allowed primary_topic",
+      "tone": "one allowed tone",
+      "entities": ["short entity names"],
+      "market_relevance": "one allowed market_relevance",
+      "policy_direction": "one allowed policy_direction",
+      "reason": "one short sentence"
+    }}
+  ]
+}}
+
+Rules:
+- Return exactly one classification for every input item_id.
+- Do not combine posts.
+- Do not invent item_id values.
+
+{strict_instruction}
+
+Posts:
+{post_blocks}
+""".strip()
+
+    return [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": user_prompt},
+    ]
+
+
 def extract_json_object(raw_output: str) -> dict[str, Any]:
     text = raw_output.strip()
     fenced_match = JSON_BLOCK_PATTERN.search(text)
@@ -189,6 +254,34 @@ def extract_first_balanced_json_object(text: str) -> str:
 
 def validate_classification(raw_output: str) -> NarrativeClassification:
     return NarrativeClassification.model_validate(extract_json_object(raw_output))
+
+
+def validate_batch_classification(
+    raw_output: str,
+    expected_item_ids: set[str],
+) -> dict[str, NarrativeClassification]:
+    payload = extract_json_object(raw_output)
+    raw_items = payload.get("classifications")
+    if not isinstance(raw_items, list):
+        raise ValueError("Batch classification response must include a classifications list.")
+
+    classifications: dict[str, NarrativeClassification] = {}
+    for raw_item in raw_items:
+        if not isinstance(raw_item, dict):
+            raise ValueError("Each batch classification must be a JSON object.")
+        item_id = str(raw_item.get("item_id", "")).strip()
+        if item_id not in expected_item_ids:
+            raise ValueError(f"Unexpected batch classification item_id: {item_id}")
+        if item_id in classifications:
+            raise ValueError(f"Duplicate batch classification item_id: {item_id}")
+
+        classification_payload = {key: value for key, value in raw_item.items() if key != "item_id"}
+        classifications[item_id] = NarrativeClassification.model_validate(classification_payload)
+
+    if set(classifications) != expected_item_ids:
+        missing_ids = ", ".join(sorted(expected_item_ids.difference(classifications)))
+        raise ValueError(f"Batch classification response is missing item_id values: {missing_ids}")
+    return classifications
 
 
 def classification_to_columns(classification: NarrativeClassification) -> dict[str, Any]:
@@ -238,6 +331,51 @@ def classify_text(
     return fallback_classification(), "invalid_output"
 
 
+def classify_text_batch(
+    texts: list[str],
+    llm: LLMCallable | None,
+) -> list[tuple[NarrativeClassification, str]]:
+    results: list[tuple[NarrativeClassification, str] | None] = [None] * len(texts)
+    non_empty_posts: list[tuple[str, str]] = []
+
+    for position, cleaned_text in enumerate(texts):
+        if not cleaned_text.strip():
+            results[position] = (fallback_classification(), "empty_text")
+        elif llm is None:
+            results[position] = (fallback_classification(), "no_llm")
+        else:
+            non_empty_posts.append((str(position), cleaned_text))
+
+    if non_empty_posts:
+        expected_item_ids = {item_id for item_id, _ in non_empty_posts}
+        for strict in (False, True):
+            messages = build_batch_classification_messages(non_empty_posts, strict=strict)
+            try:
+                classifications = validate_batch_classification(llm(messages), expected_item_ids)
+                for item_id, classification in classifications.items():
+                    results[int(item_id)] = (classification, "ok")
+                break
+            except (json.JSONDecodeError, ValidationError, TypeError, ValueError):
+                if strict:
+                    for item_id, _ in non_empty_posts:
+                        results[int(item_id)] = (fallback_classification(), "invalid_output")
+                continue
+            except FatalClassificationError:
+                raise
+            except Exception:
+                for item_id, _ in non_empty_posts:
+                    results[int(item_id)] = (fallback_classification(), "llm_error")
+                break
+
+    return [result if result is not None else (fallback_classification(), "invalid_output") for result in results]
+
+
+def batched(values: list[Any], batch_size: int) -> list[list[Any]]:
+    if batch_size < 1:
+        raise ValueError("batch_size must be at least 1.")
+    return [values[index : index + batch_size] for index in range(0, len(values), batch_size)]
+
+
 def iter_with_progress(values: pd.Series, show_progress: bool) -> Any:
     if not show_progress:
         return values
@@ -260,20 +398,23 @@ def build_classification_frame(
     llm: LLMCallable | None,
     limit: int | None,
     show_progress: bool,
+    batch_size: int = DEFAULT_CLASSIFICATION_BATCH_SIZE,
 ) -> pd.DataFrame:
     rows_to_classify = source_df.head(limit) if limit is not None else source_df
     output_rows: list[dict[str, Any]] = []
     cleaned_text_values = rows_to_classify["cleaned_text"].fillna("").astype(str)
 
-    for cleaned_text in iter_with_progress(cleaned_text_values, show_progress=show_progress):
-        classification, status = classify_text(cleaned_text, llm)
-        output_rows.append(
-            classification_result_row(
-                classification=classification,
-                status=status,
-                text_truncated=len(cleaned_text) > MAX_CLASSIFICATION_TEXT_CHARS,
+    text_batches = batched(cleaned_text_values.tolist(), batch_size)
+    for text_batch in iter_with_progress(text_batches, show_progress=show_progress):
+        batch_results = classify_text_batch(text_batch, llm)
+        for cleaned_text, (classification, status) in zip(text_batch, batch_results):
+            output_rows.append(
+                classification_result_row(
+                    classification=classification,
+                    status=status,
+                    text_truncated=len(cleaned_text) > MAX_CLASSIFICATION_TEXT_CHARS,
+                )
             )
-        )
 
     classified = pd.DataFrame(output_rows, index=rows_to_classify.index)
 
@@ -297,12 +438,19 @@ def classify_dataframe(
     llm: LLMCallable | None,
     limit: int | None = None,
     show_progress: bool = False,
+    batch_size: int = DEFAULT_CLASSIFICATION_BATCH_SIZE,
 ) -> pd.DataFrame:
     if "cleaned_text" not in df.columns:
         raise ValueError("Input data must include a cleaned_text column.")
     validate_no_existing_classification_columns(df)
 
-    classified = build_classification_frame(df, llm=llm, limit=limit, show_progress=show_progress)
+    classified = build_classification_frame(
+        df,
+        llm=llm,
+        limit=limit,
+        show_progress=show_progress,
+        batch_size=batch_size,
+    )
     return pd.concat([df.reset_index(drop=True), classified.reset_index(drop=True)], axis=1)
 
 
@@ -347,6 +495,7 @@ def classify_dataframe_incremental(
     checkpoint_every: int = 1000,
     resume: bool = False,
     show_progress: bool = True,
+    batch_size: int = DEFAULT_CLASSIFICATION_BATCH_SIZE,
 ) -> pd.DataFrame:
     if "cleaned_text" not in df.columns:
         raise ValueError("Input data must include a cleaned_text column.")
@@ -363,23 +512,27 @@ def classify_dataframe_incremental(
     if limit is not None:
         candidate_index = candidate_index[:limit]
 
-    values = source.loc[candidate_index, "cleaned_text"].fillna("").astype(str)
+    index_batches = batched(list(candidate_index), batch_size)
     processed_since_checkpoint = 0
 
-    for index, cleaned_text in zip(
-        candidate_index,
-        iter_with_progress(values, show_progress=show_progress),
-    ):
-        classification, status = classify_text(cleaned_text, llm)
-        row = classification_result_row(
-            classification=classification,
-            status=status,
-            text_truncated=len(cleaned_text) > MAX_CLASSIFICATION_TEXT_CHARS,
-        )
-        for column, value in row.items():
-            source.at[index, column] = value
+    for index_batch in iter_with_progress(index_batches, show_progress=show_progress):
+        text_batch = source.loc[index_batch, "cleaned_text"].fillna("").astype(str).tolist()
+        batch_results = classify_text_batch(text_batch, llm)
 
-        processed_since_checkpoint += 1
+        for index, cleaned_text, (classification, status) in zip(
+            index_batch,
+            text_batch,
+            batch_results,
+        ):
+            row = classification_result_row(
+                classification=classification,
+                status=status,
+                text_truncated=len(cleaned_text) > MAX_CLASSIFICATION_TEXT_CHARS,
+            )
+            for column, value in row.items():
+                source.at[index, column] = value
+
+        processed_since_checkpoint += len(index_batch)
         if checkpoint_every > 0 and processed_since_checkpoint >= checkpoint_every:
             write_checkpoint(source, output_path)
             processed_since_checkpoint = 0
@@ -514,6 +667,7 @@ def run_classification(
     checkpoint_every: int = 1000,
     resume: bool = False,
     progress: bool = True,
+    batch_size: int = DEFAULT_CLASSIFICATION_BATCH_SIZE,
 ) -> pd.DataFrame:
     df = pd.read_parquet(input_path)
     llm = None if fallback_only else create_openai_llm(model)
@@ -531,6 +685,7 @@ def run_classification(
         checkpoint_every=checkpoint_every,
         resume=resume,
         show_progress=progress,
+        batch_size=batch_size,
     )
     return classified_df
 
@@ -541,6 +696,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--output-path", type=Path, default=CLASSIFIED_EVENTS_PATH)
     parser.add_argument("--model", default=DEFAULT_CLASSIFICATION_MODEL)
     parser.add_argument("--limit", type=int, default=None)
+    parser.add_argument(
+        "--batch-size",
+        type=int,
+        default=DEFAULT_CLASSIFICATION_BATCH_SIZE,
+        help="Number of posts to classify per LLM request. Use 1 for single-post requests.",
+    )
     parser.add_argument("--checkpoint-every", type=int, default=1000)
     parser.add_argument("--resume", action="store_true")
     parser.add_argument("--no-progress", action="store_true")
@@ -564,6 +725,7 @@ def main() -> None:
             checkpoint_every=args.checkpoint_every,
             resume=args.resume,
             progress=not args.no_progress,
+            batch_size=args.batch_size,
         )
     except FatalClassificationError as error:
         raise SystemExit(f"Classification stopped: {error}") from error
