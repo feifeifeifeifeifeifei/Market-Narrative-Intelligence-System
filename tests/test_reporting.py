@@ -157,7 +157,6 @@ def test_build_powerbi_assets_writes_tables_screenshots_and_docs(tmp_path, monke
     monkeypatch.setattr(reporting, "POWERBI_REPORT_DIR", reports_dir / "powerbi")
     monkeypatch.setattr(reporting, "POWERBI_TABLES_DIR", reports_dir / "powerbi" / "tables")
     monkeypatch.setattr(reporting, "POWERBI_SCREENSHOTS_DIR", reports_dir / "powerbi" / "screenshots")
-    monkeypatch.setattr(reporting, "RESUME_BULLETS_PATH", reports_dir / "resume_bullets.md")
 
     def fake_analyze(**kwargs):
         return {"retrieved_post_table": []}
@@ -173,4 +172,3 @@ def test_build_powerbi_assets_writes_tables_screenshots_and_docs(tmp_path, monke
     assert all(path.exists() for path in assets["table_paths"].values())
     assert all(path.exists() and path.stat().st_size > 0 for path in assets["screenshot_paths"])
     assert assets["spec_path"].exists()
-    assert assets["resume_path"].exists()

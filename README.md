@@ -155,7 +155,7 @@ This runs the M5 flow: semantic search returns ranked `post_id`s, DuckDB joins t
 python -m src.reporting --embedding-provider hashing
 ```
 
-This builds Power BI-ready source tables, static dashboard preview screenshots, a dashboard specification, and resume bullets.
+This builds Power BI-ready source tables, static dashboard preview screenshots, and a dashboard specification.
 
 Power BI source tables:
 
@@ -182,7 +182,6 @@ the Data Quality view reports the full classified artifact, including empty-text
 Dashboard notes:
 
 - Specification: `reports/powerbi/dashboard_spec.md`
-- Resume bullets: `reports/resume_bullets.md`
 - Current local classified data contains 21,188 validated LLM classifications out of 26,997 total rows; remaining fallback rows are primarily empty cleaned text, plus a small number of failed LLM batches.
 
 ## Run API And Frontend

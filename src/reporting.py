@@ -20,7 +20,6 @@ REPORTS_DIR = PROJECT_ROOT / "reports"
 POWERBI_REPORT_DIR = REPORTS_DIR / "powerbi"
 POWERBI_TABLES_DIR = POWERBI_REPORT_DIR / "tables"
 POWERBI_SCREENSHOTS_DIR = POWERBI_REPORT_DIR / "screenshots"
-RESUME_BULLETS_PATH = REPORTS_DIR / "resume_bullets.md"
 KNOWN_CLASSIFICATION_STATUSES = ("ok", "empty_text", "no_llm", "invalid_output", "llm_error", "not_processed")
 
 
@@ -462,21 +461,6 @@ artifact including empty-text and failed LLM rows.
     )
     return path
 
-
-def write_resume_bullets() -> Path:
-    RESUME_BULLETS_PATH.parent.mkdir(parents=True, exist_ok=True)
-    RESUME_BULLETS_PATH.write_text(
-        """# Resume Bullets
-
-- Built an end-to-end market narrative intelligence pipeline that transforms Truth Social posts into cleaned analytical events, validates structured LLM classifications, and computes daily open-to-close asset returns across equity, rates, commodity, and crypto ETFs.
-- Implemented deterministic topic-to-ticker mapping and ChromaDB semantic retrieval, enabling similar-event search joined back to DuckDB market reaction analysis by stable `post_id`.
-- Produced Power BI-ready dashboard tables and preview screenshots covering narrative trends, selected asset reactions, similar-event outputs, and data quality diagnostics.
-""",
-        encoding="utf-8",
-    )
-    return RESUME_BULLETS_PATH
-
-
 def build_powerbi_assets(
     events_path: Path = CLASSIFIED_EVENTS_PATH,
     query: str = "China tariff threats",
@@ -490,12 +474,10 @@ def build_powerbi_assets(
     table_paths = write_report_tables(tables)
     screenshot_paths = render_dashboard_previews(df, tables)
     spec_path = write_powerbi_spec()
-    resume_path = write_resume_bullets()
     return {
         "table_paths": table_paths,
         "screenshot_paths": screenshot_paths,
         "spec_path": spec_path,
-        "resume_path": resume_path,
     }
 
 
@@ -525,7 +507,6 @@ def main() -> None:
     print(f"Wrote {len(assets['table_paths'])} dashboard tables to {POWERBI_TABLES_DIR}")
     print(f"Wrote {len(assets['screenshot_paths'])} preview screenshots to {POWERBI_SCREENSHOTS_DIR}")
     print(f"Wrote dashboard spec to {assets['spec_path']}")
-    print(f"Wrote resume bullets to {assets['resume_path']}")
 
 
 if __name__ == "__main__":
