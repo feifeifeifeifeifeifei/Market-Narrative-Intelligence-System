@@ -11,6 +11,7 @@ from src.config import (
     CHROMA_DB_DIR,
     CLASSIFIED_EVENTS_PATH,
 )
+from src.clean import build_retrieval_text
 from src.embeddings import EmbeddingProvider, create_embedding_provider
 
 
@@ -24,6 +25,7 @@ CHROMA_METADATA_COLUMNS = [
     "policy_direction",
     "is_president",
 ]
+CHROMA_DOCUMENT_COLUMN = "retrieval_text"
 
 
 def require_chromadb() -> Any:
@@ -97,7 +99,11 @@ def chroma_rows(df: pd.DataFrame) -> pd.DataFrame:
     rows = df.copy()
     rows["post_id"] = rows["post_id"].astype(str)
     rows["cleaned_text"] = rows["cleaned_text"].fillna("").astype(str).str.strip()
-    rows = rows.loc[rows["cleaned_text"] != ""].copy()
+    if CHROMA_DOCUMENT_COLUMN in rows.columns:
+        rows[CHROMA_DOCUMENT_COLUMN] = rows[CHROMA_DOCUMENT_COLUMN].fillna("").astype(str).map(build_retrieval_text)
+    else:
+        rows[CHROMA_DOCUMENT_COLUMN] = rows["cleaned_text"].map(build_retrieval_text)
+    rows = rows.loc[rows[CHROMA_DOCUMENT_COLUMN] != ""].copy()
     rows = rows.drop_duplicates("post_id", keep="last")
     return rows
 
@@ -123,7 +129,7 @@ def upsert_dataframe(
             return 0
 
     ids = rows["post_id"].tolist()
-    documents = rows["cleaned_text"].tolist()
+    documents = rows[CHROMA_DOCUMENT_COLUMN].tolist()
     metadatas = [row_metadata(row) for _, row in rows.iterrows()]
 
     batches = list(zip(

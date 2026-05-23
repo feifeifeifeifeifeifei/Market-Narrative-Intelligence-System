@@ -63,6 +63,7 @@ def retrieval_dataframe(search_results: list[dict[str, Any]]) -> pd.DataFrame:
                 "retrieval_rank": index + 1,
                 "similarity_score": result.get("score"),
                 "similarity_distance": result.get("distance"),
+                "retrieved_document_text": result.get("cleaned_text"),
             }
             for index, result in enumerate(search_results)
         ]
@@ -85,13 +86,14 @@ def fetch_events_by_post_id(
         events = connection.execute(
             f"""
             WITH ranked AS (
-                SELECT post_id, retrieval_rank, similarity_score, similarity_distance
+                SELECT post_id, retrieval_rank, similarity_score, similarity_distance, retrieved_document_text
                 FROM retrieval
             )
             SELECT
                 ranked.retrieval_rank,
                 ranked.similarity_score,
                 ranked.similarity_distance,
+                ranked.retrieved_document_text,
                 events.*
             FROM ranked
             LEFT JOIN read_parquet({path_sql}) AS events
@@ -100,7 +102,19 @@ def fetch_events_by_post_id(
             ORDER BY ranked.retrieval_rank
             """
         ).fetchdf()
-    return ensure_selected_ticker_columns(events)
+    return ensure_selected_ticker_columns(use_retrieved_document_text(events))
+
+
+def use_retrieved_document_text(events: pd.DataFrame) -> pd.DataFrame:
+    result = events.copy()
+    if "retrieved_document_text" not in result.columns or "cleaned_text" not in result.columns:
+        return result
+
+    retrieved_text = result["retrieved_document_text"].map(
+        lambda value: "" if pd.isna(value) else str(value).strip()
+    )
+    result.loc[retrieved_text != "", "cleaned_text"] = retrieved_text.loc[retrieved_text != ""]
+    return result
 
 
 def ensure_selected_ticker_columns(events: pd.DataFrame) -> pd.DataFrame:

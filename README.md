@@ -1,6 +1,15 @@
 # Market Narrative Intelligence System
 
-This project turns raw Truth Social posts into cleaned market narrative events, then adds validated structured classifications for downstream retrieval, DuckDB analysis, and Power BI exports.
+Market Narrative Intelligence turns Truth Social posts into searchable market narrative events, then connects similar historical posts to topic-specific ticker baskets and daily open-to-close market reactions.
+
+## What It Does
+
+- Cleans raw social posts into row-level event records with normalized timestamps, engagement fields, and daily ticker returns.
+- Uses an LLM once for structured narrative labels: topic, tone, entities, market relevance, and policy direction.
+- Maps each narrative topic to an auditable rule-based ticker basket, instead of asking the LLM to choose assets.
+- Builds a ChromaDB semantic retrieval layer over cleaned retrieval text, with low-information retweet shells removed before embedding.
+- Serves an interactive FastAPI + React search workspace for similar-event analysis and market-reaction summaries.
+- Exports DuckDB/Power BI-ready tables and static dashboard previews.
 
 ## Technical Route
 
@@ -32,11 +41,28 @@ Small 20-row Parquet samples are included under `data-sample/` so readers can in
 | Cleaned events | `data/processed/cleaned_events.parquet` sample: `data-sample/cleaned_events_sample.parquet` | `26,997 x 75` | `post_id`, normalized `datetime/date/time`, `cleaned_text`, `total_engagement`, `text_length`, `has_url`, `<ticker>_open`, `<ticker>_close`, `<ticker>_daily_return`, ... | Canonical analytical event table after ETL. |
 | Classified events | `data/processed/classified_events.parquet` sample: `data-sample/classified_events_sample.parquet` | `26,997 x 86` | all cleaned event fields plus `primary_topic`, `tone`, `entities`, `market_relevance`, `policy_direction`, `classification_reason`, `classification_status`, `selected_tickers`, `selected_return_columns` | Main local fact table used by DuckDB, API analysis, and Power BI export. |
 | Power BI export | `data/processed/powerbi_export.csv` | dashboard subset | ids, dates, `cleaned_text`, engagement fields, classification fields, selected tickers, selected return columns, daily returns, ... | Flattened CSV for Power BI and static dashboard previews. |
-| Vector index | `chroma_db/market_narrative_posts` | non-empty text rows | document id = `post_id`, document = `cleaned_text`, metadata = date, topic, tone, entities, market relevance, policy direction, president flag | Retrieval layer for semantic search and similar-event analysis. |
+| Vector index | `chroma_db/market_narrative_posts` | non-empty retrieval text rows | document id = `post_id`, document = retrieval text derived from `cleaned_text`, metadata = date, topic, tone, entities, market relevance, policy direction, president flag | Retrieval layer for semantic search and similar-event analysis. |
 
 See `data-sample/README.md` for the exact sample files, including the `classified_events_gpt5mini_full` artifact before ticker-selection enrichment.
 
-The LLM does not see the full dataframe. During classification, only `cleaned_text` is sent to the model, in batches of 10 posts. During retrieval, ChromaDB stores only the text embedding plus lightweight metadata; DuckDB later joins the retrieved `post_id`s back to `classified_events.parquet` to recover the full structured row and market-return columns.
+The LLM does not see the full dataframe. During classification, only `cleaned_text` is sent to the model, in batches of 10 posts. During retrieval, ChromaDB stores only the retrieval-text embedding plus lightweight metadata; DuckDB later joins the retrieved `post_id`s back to `classified_events.parquet` to recover the full structured row and market-return columns.
+
+## Frontend Walkthrough
+
+The React frontend is a lightweight analyst workspace on top of the FastAPI retrieval endpoint. A user enters a market narrative question, chooses how many similar posts to retrieve, and receives the matched posts, topic-derived ticker basket, and same-day market reaction summary in one view.
+
+![Similar event analysis UI](reports/frontend/similar_event_analysis.png)
+
+What the main panels show:
+
+- Query bar: the natural-language market narrative to search, plus `Top K`, the number of similar historical posts to retrieve.
+- Example queries: quick prompts for common narrative themes such as tariffs, oil and energy, defense spending, and rates.
+- Analysis: a deterministic summary of retrieved post count, dominant retrieved topic, guardrail decision, and the tickers used for return analysis.
+- Similar Posts: the ChromaDB nearest-neighbor results, ordered by similarity score, with date, classified topic, score, and cleaned display text.
+- Selected Tickers: the ticker basket mapped from the retrieved topics. The LLM does not choose these tickers; they come from the rule-based topic map.
+- Market Reaction: average and median daily open-to-close returns for each selected ticker across the retrieved sample. `N` is the number of retrieved posts with usable return data for that ticker.
+- Topic Map: the full rule-based mapping from narrative topic to ticker basket, shown so the asset-selection logic is transparent.
+
 
 ## Run the ETL
 
@@ -109,15 +135,15 @@ This adds deterministic `selected_tickers` and `selected_return_columns` fields 
 ## Build And Search ChromaDB
 
 ```bash
-python -m src.build_chroma --embedding-provider hashing
+python -m src.build_chroma --embedding-provider openai
 ```
 
-The build step indexes non-empty `cleaned_text` values into the `market_narrative_posts` collection, using `post_id` as the Chroma document id and storing date, datetime, topic, tone, entities, market relevance, policy direction, and president metadata. The `hashing` provider is a deterministic local fallback for development and tests; use OpenAI embeddings for real semantic quality.
+The build step indexes non-empty retrieval text into the `market_narrative_posts` collection, using `post_id` as the Chroma document id and storing date, datetime, topic, tone, entities, market relevance, policy direction, and president metadata. Retrieval text is derived from `cleaned_text`; leading retweet shells such as `RT @realDonaldTrump` are stripped before embedding, and rows that become empty after that cleanup are skipped. The `hashing` provider is a deterministic local fallback for development and tests; use OpenAI embeddings for real semantic quality.
 
 Embedding and retrieval flow:
 
 1. `src.embeddings.create_embedding_provider(...)` chooses either OpenAI embeddings (`text-embedding-3-small` by default) or a deterministic local hashing embedding.
-2. `src.build_chroma.build_chroma_collection(...)` embeds each non-empty `cleaned_text` and upserts it into ChromaDB with `post_id` as the stable document id.
+2. `src.build_chroma.build_chroma_collection(...)` embeds each non-empty retrieval text and upserts it into ChromaDB with `post_id` as the stable document id.
 3. `src.semantic_search.search_similar_posts(...)` embeds the user's query with the same provider, checks that it matches the provider used to build the collection, and returns top-k nearest posts with similarity scores.
 4. `src.analytics.analyze_similar_events(...)` uses those retrieved `post_id`s to join back to `classified_events.parquet`, then summarizes topics, selected tickers, similar posts, and daily open-to-close returns.
 
@@ -132,19 +158,19 @@ python -m src.build_chroma --embedding-provider openai
 `auto` tries OpenAI first and warns before falling back to local hashing. Search enforces that the query-time embedding provider matches the provider stored in the collection metadata. To append only missing ids during rebuilds:
 
 ```bash
-python -m src.build_chroma --no-reset --resume --embedding-provider hashing
+python -m src.build_chroma --no-reset --resume --embedding-provider openai
 ```
 
 Search the local collection:
 
 ```bash
-python -m src.semantic_search "China tariff threats" --top-k 5 --embedding-provider hashing
+python -m src.semantic_search "China tariff threats" --top-k 5 --embedding-provider openai
 ```
 
 ## Analyze Similar Events
 
 ```bash
-python -m src.analytics "China tariff threats" --top-k 20 --embedding-provider hashing
+python -m src.analytics "China tariff threats" --top-k 20 --embedding-provider openai
 ```
 
 This runs the M5 flow: semantic search returns ranked `post_id`s, DuckDB joins those ids back to `classified_events.parquet`, and the analytics layer computes average and median daily open-to-close returns for the tickers selected by the deterministic topic mapping.
@@ -152,7 +178,7 @@ This runs the M5 flow: semantic search returns ranked `post_id`s, DuckDB joins t
 ## Build Dashboard Assets
 
 ```bash
-python -m src.reporting --embedding-provider hashing
+python -m src.reporting --embedding-provider openai
 ```
 
 This builds Power BI-ready source tables, static dashboard preview screenshots, and a dashboard specification.
@@ -189,7 +215,7 @@ Dashboard notes:
 Start the FastAPI backend:
 
 ```bash
-export API_EMBEDDING_PROVIDER=hashing
+export API_EMBEDDING_PROVIDER=openai
 python -m uvicorn app.main:app --host 127.0.0.1 --port 8000
 ```
 

@@ -14,6 +14,7 @@ from src.analytics import (
     parse_ticker_list,
     selected_ticker_union,
     selected_topic_counts,
+    use_retrieved_document_text,
 )
 
 
@@ -75,8 +76,8 @@ def test_fetch_events_by_post_id_joins_retrieval_results_with_duckdb(tmp_path) -
         }
     ).to_parquet(events_path, index=False)
     search_results = [
-        {"post_id": "2", "score": 0.9, "distance": 0.1},
-        {"post_id": "1", "score": 0.8, "distance": 0.2},
+        {"post_id": "2", "score": 0.9, "distance": 0.1, "cleaned_text": "Oil policy"},
+        {"post_id": "1", "score": 0.8, "distance": 0.2, "cleaned_text": "China tariffs"},
     ]
 
     result = fetch_events_by_post_id(search_results, events_path=events_path)
@@ -84,6 +85,19 @@ def test_fetch_events_by_post_id_joins_retrieval_results_with_duckdb(tmp_path) -
     assert result["post_id"].tolist() == ["2", "1"]
     assert result["retrieval_rank"].tolist() == [1, 2]
     assert result.loc[0, "similarity_score"] == 0.9
+
+
+def test_use_retrieved_document_text_updates_display_text() -> None:
+    events = pd.DataFrame(
+        {
+            "cleaned_text": ["RT @realDonaldTrumpOil and gas prices are moving", "China tariffs"],
+            "retrieved_document_text": ["Oil and gas prices are moving", ""],
+        }
+    )
+
+    result = use_retrieved_document_text(events)
+
+    assert result["cleaned_text"].tolist() == ["Oil and gas prices are moving", "China tariffs"]
 
 
 def test_ensure_selected_ticker_columns_fills_missing_mapping_columns() -> None:

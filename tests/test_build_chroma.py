@@ -44,6 +44,26 @@ def test_chroma_rows_skips_empty_text_and_deduplicates_post_ids() -> None:
 
     assert result["post_id"].tolist() == ["1", "2"]
     assert result["cleaned_text"].tolist() == ["hello", "latest"]
+    assert result["retrieval_text"].tolist() == ["hello", "latest"]
+
+
+def test_chroma_rows_strips_retweet_shell_for_retrieval_documents() -> None:
+    df = pd.DataFrame(
+        {
+            "post_id": ["1", "2"],
+            "cleaned_text": [
+                "RT @realDonaldTrump",
+                "RT @realDonaldTrumpThe Iranian leadership forced Ships toward Texas oil",
+            ],
+        }
+    )
+
+    result = chroma_rows(df)
+
+    assert result["post_id"].tolist() == ["2"]
+    assert result["retrieval_text"].tolist() == [
+        "The Iranian leadership forced Ships toward Texas oil"
+    ]
 
 
 def test_metadata_value_serializes_timestamps_and_missing_values() -> None:
@@ -92,6 +112,23 @@ def test_upsert_dataframe_writes_embeddings_documents_and_metadata() -> None:
     assert collection.upserts[0]["documents"] == ["China tariffs"]
     assert collection.upserts[0]["metadatas"][0]["primary_topic"] == "tariff_trade"
     assert len(collection.upserts[0]["embeddings"][0]) == 8
+
+
+def test_upsert_dataframe_uses_retrieval_text_as_chroma_document() -> None:
+    collection = FakeCollection()
+    provider = HashingEmbeddingProvider(dimensions=8)
+    df = pd.DataFrame(
+        {
+            "post_id": ["1"],
+            "cleaned_text": ["RT @realDonaldTrumpOil and gas prices are moving"],
+            "primary_topic": ["oil_energy"],
+        }
+    )
+
+    written = upsert_dataframe(collection, df, provider, batch_size=10)
+
+    assert written == 1
+    assert collection.upserts[0]["documents"] == ["Oil and gas prices are moving"]
 
 
 def test_upsert_dataframe_can_skip_existing_ids() -> None:

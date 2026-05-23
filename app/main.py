@@ -18,7 +18,7 @@ from src.ticker_mapping import TOPIC_TO_TICKERS
 
 DEFAULT_TOP_K = 20
 MAX_API_TOP_K = 50
-API_EMBEDDING_PROVIDER = os.getenv("API_EMBEDDING_PROVIDER", "hashing")
+API_EMBEDDING_PROVIDER = os.getenv("API_EMBEDDING_PROVIDER", "openai")
 logger = logging.getLogger(__name__)
 CHROMA_LOCK = threading.Lock()
 
