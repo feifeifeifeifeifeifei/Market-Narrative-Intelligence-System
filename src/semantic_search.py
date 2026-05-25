@@ -8,6 +8,13 @@ from src.build_chroma import get_chroma_client, get_collection
 from src.config import CHROMA_COLLECTION_NAME, CHROMA_DB_DIR
 from src.embeddings import EmbeddingProvider, create_embedding_provider
 
+SEARCH_FILTER_FIELDS = {
+    "primary_topic",
+    "tone",
+    "market_relevance",
+    "policy_direction",
+}
+
 
 def similarity_from_distance(distance: float | None) -> float | None:
     if distance is None:
@@ -17,15 +24,16 @@ def similarity_from_distance(distance: float | None) -> float | None:
 
 def search_similar_posts(
     query: str,
-    top_k: int = 10,
+    top_k: int | None = 10,
     persist_dir: Path = CHROMA_DB_DIR,
     collection_name: str = CHROMA_COLLECTION_NAME,
     embedding_provider: EmbeddingProvider | None = None,
     embedding_provider_kind: str = "auto",
+    filters: dict[str, str] | None = None,
 ) -> list[dict[str, Any]]:
     if not query.strip():
         raise ValueError("Search query must not be empty.")
-    if top_k < 1:
+    if top_k is not None and top_k < 1:
         raise ValueError("top_k must be at least 1.")
 
     provider = embedding_provider or create_embedding_provider(embedding_provider_kind)
@@ -33,13 +41,37 @@ def search_similar_posts(
     collection = get_collection(client, collection_name)
     validate_embedding_provider_matches_collection(provider, collection)
     query_embedding = provider.embed_texts([query])[0]
+    n_results = top_k if top_k is not None else max(1, int(collection.count()))
+    where_filter = build_chroma_where(filters)
 
     raw_results = collection.query(
         query_embeddings=[query_embedding],
-        n_results=top_k,
+        n_results=n_results,
         include=["documents", "metadatas", "distances"],
+        **({"where": where_filter} if where_filter else {}),
     )
     return normalize_query_results(raw_results)
+
+
+def build_chroma_where(filters: dict[str, str] | None) -> dict[str, Any] | None:
+    normalized = normalize_search_filters(filters)
+    if not normalized:
+        return None
+    clauses = [{field: value} for field, value in normalized.items()]
+    if len(clauses) == 1:
+        return clauses[0]
+    return {"$and": clauses}
+
+
+def normalize_search_filters(filters: dict[str, str] | None) -> dict[str, str]:
+    normalized: dict[str, str] = {}
+    for field, value in (filters or {}).items():
+        if field not in SEARCH_FILTER_FIELDS:
+            raise ValueError(f"Unsupported search filter: {field}.")
+        clean_value = str(value).strip()
+        if clean_value and clean_value.lower() != "all":
+            normalized[field] = clean_value
+    return normalized
 
 
 def validate_embedding_provider_matches_collection(

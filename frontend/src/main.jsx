@@ -7,6 +7,7 @@ import {
   Brain,
   CheckCircle2,
   Database,
+  ListFilter,
   Loader2,
   Search,
   ShieldCheck,
@@ -22,9 +23,22 @@ const EXAMPLES = [
   'Fed rates and dollar comments',
 ];
 
+const EMPTY_FILTERS = {
+  tone: '',
+  market_relevance: '',
+  policy_direction: '',
+};
+
+const FILTER_LABELS = {
+  tone: 'Tone',
+  market_relevance: 'Relevance',
+  policy_direction: 'Policy',
+};
+
 function App() {
   const [question, setQuestion] = useState(EXAMPLES[0]);
-  const [topK, setTopK] = useState(10);
+  const [filters, setFilters] = useState(EMPTY_FILTERS);
+  const [filterOptions, setFilterOptions] = useState({});
   const [topics, setTopics] = useState({});
   const [health, setHealth] = useState(null);
   const [result, setResult] = useState(null);
@@ -34,6 +48,7 @@ function App() {
   useEffect(() => {
     fetch(`${API_BASE}/api/health`).then((res) => res.json()).then(setHealth).catch(() => setHealth({ status: 'offline' }));
     fetch(`${API_BASE}/api/topics`).then((res) => res.json()).then(setTopics).catch(() => setTopics({}));
+    fetch(`${API_BASE}/api/filter-options`).then((res) => res.json()).then(setFilterOptions).catch(() => setFilterOptions({}));
   }, []);
 
   async function analyze() {
@@ -44,7 +59,7 @@ function App() {
       const response = await fetch(`${API_BASE}/api/analyze`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ question, top_k: topK }),
+        body: JSON.stringify({ question, ...activeFilters(filters) }),
       });
       const body = await response.json();
       if (!response.ok) throw new Error(errorMessage(body.detail));
@@ -68,10 +83,8 @@ function App() {
     }
   }
 
-  function updateTopK(event) {
-    const parsed = Number.parseInt(event.target.value, 10);
-    if (!Number.isFinite(parsed)) return;
-    setTopK(Math.min(50, Math.max(1, parsed)));
+  function updateFilter(field, value) {
+    setFilters((current) => ({ ...current, [field]: value }));
   }
 
   const topicRows = Object.entries(topics).slice(0, 12);
@@ -98,22 +111,30 @@ function App() {
             onKeyDown={submitOnEnter}
           />
         </div>
-        <label className="topk">
-          <span>Top K</span>
-          <input
-            aria-label="Number of similar posts"
-            type="number"
-            min="1"
-            max="50"
-            value={topK}
-            onChange={updateTopK}
-          />
-        </label>
         <button type="submit" className="primary" disabled={loading}>
           {loading ? <Loader2 className="spin" size={18} /> : <Brain size={18} />}
           Analyze
         </button>
       </form>
+
+      <section className="filter-band" aria-label="Retrieval filters">
+        <div className="filter-title"><ListFilter size={17} /><span>Filters</span></div>
+        {Object.entries(FILTER_LABELS).map(([field, label]) => (
+          <label className="filter-control" key={field}>
+            <span>{label}</span>
+            <select
+              aria-label={`${label} filter`}
+              value={filters[field]}
+              onChange={(event) => updateFilter(field, event.target.value)}
+            >
+              <option value="">All</option>
+              {(filterOptions[field] || []).map((option) => (
+                <option key={option} value={option}>{option}</option>
+              ))}
+            </select>
+          </label>
+        ))}
+      </section>
 
       <section className="examples" aria-label="Example queries">
         {EXAMPLES.map((example) => (
@@ -137,7 +158,7 @@ function App() {
           <SimilarPosts posts={result?.similar_posts || []} hasResult={Boolean(result && result.query_type !== 'refusal')} />
         </div>
         <aside className="side-column">
-          <TickerPanel tickers={result?.selected_tickers || []} selectedTopic={result?.selected_topic} />
+          <TickerPanel tickers={result?.selected_tickers || []} selectedTopics={result?.selected_topics || []} />
           <MarketReaction rows={result?.market_reaction || []} />
           <TopicMap rows={topicRows} />
         </aside>
@@ -178,8 +199,9 @@ function SummaryPanel({ result, loading }) {
           <p className="summary">{result.summary}</p>
           <dl className="metrics">
             <div><dt>Retrieved</dt><dd>{result.retrieved_count ?? 0}</dd></div>
-            <div><dt>Topic</dt><dd>{result.selected_topic || 'none'}</dd></div>
+            <div><dt>Top Topics</dt><dd>{formatTopicMix(result.selected_topics)}</dd></div>
             <div><dt>Guardrail</dt><dd>{result.guardrail_decision}</dd></div>
+            <div><dt>Filters</dt><dd>{formatFilters(result.filters)}</dd></div>
           </dl>
         </div>
       )}
@@ -187,11 +209,11 @@ function SummaryPanel({ result, loading }) {
   );
 }
 
-function TickerPanel({ tickers, selectedTopic }) {
+function TickerPanel({ tickers, selectedTopics }) {
   return (
     <section className="panel">
       <header><Database size={18} /><h2>Selected Tickers</h2></header>
-      <p className="mini-label">{selectedTopic || 'No topic selected'}</p>
+      <p className="mini-label">{selectedTopics.length ? `From ${formatTopicMix(selectedTopics, 2)}` : 'No retrieved topic mix'}</p>
       <div className="ticker-list">
         {tickers.length ? tickers.map((ticker) => <span key={ticker}>{ticker}</span>) : <span className="empty-pill">none</span>}
       </div>
@@ -232,6 +254,8 @@ function SimilarPosts({ posts, hasResult }) {
             <div className="post-meta">
               <span>{formatDate(post.date)}</span>
               <span>{post.primary_topic}</span>
+              {post.tone && <span>{post.tone}</span>}
+              {post.policy_direction && <span>{post.policy_direction}</span>}
               <span>{score(post.similarity_score)}</span>
             </div>
             <p>{post.cleaned_text}</p>
@@ -270,6 +294,22 @@ function formatDate(value) {
   if (!value) return 'no date';
   const date = new Date(value);
   return Number.isNaN(date.getTime()) ? 'no date' : date.toISOString().slice(0, 10);
+}
+
+function activeFilters(filters) {
+  return Object.fromEntries(Object.entries(filters).filter(([, value]) => value));
+}
+
+function formatFilters(filters) {
+  const entries = Object.entries(filters || {});
+  if (!entries.length) return 'all';
+  return entries.map(([field, value]) => `${FILTER_LABELS[field] || field}: ${value}`).join(', ');
+}
+
+function formatTopicMix(topics, limit = 3) {
+  const rows = (topics || []).slice(0, limit);
+  if (!rows.length) return 'none';
+  return rows.map((item) => `${item.primary_topic} (${item.count})`).join(', ');
 }
 
 function errorMessage(detail) {

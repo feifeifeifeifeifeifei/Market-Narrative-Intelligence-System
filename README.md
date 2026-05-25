@@ -30,7 +30,26 @@ Step outputs:
 - Retrieve matches -> similar event ids with similarity scores.
 - Join and summarize -> similar posts, selected ticker returns, summary tables, charts, and dashboard-ready data.
 
+## Frontend Walkthrough
+
+The React frontend is a lightweight analyst workspace on top of the FastAPI retrieval endpoint. A user enters a market narrative question, optionally narrows retrieval by tone, market relevance, and policy direction, then reviews the matched posts, topic mix, ticker basket, and same-day market reaction summary in one view.
+
+![Similar event analysis UI](reports/frontend/frontend2.png)
+
+What the main panels show:
+
+- Query bar: the natural-language market narrative to search.
+- Filters: optional metadata filters for `tone`, `market_relevance`, and `policy_direction`. Topic is not a manual filter; it is shown as a result distribution after retrieval.
+- Example queries: quick prompts for common narrative themes such as tariffs, oil and energy, defense spending, and rates.
+- Analysis: a deterministic summary of retrieved post count, top retrieved topics, guardrail decision, and active filters.
+- Similar Posts: the ChromaDB nearest-neighbor results, ordered by similarity score, with date, classified topic, tone, policy direction, score, and cleaned display text.
+- Selected Tickers: the ticker basket mapped from the retrieved topic mix. The LLM does not choose these tickers; they come from the rule-based topic map.
+- Market Reaction: average and median daily open-to-close returns for each selected ticker across the retrieved sample. `N` is the number of retrieved posts with usable return data for that ticker.
+- Topic Map: the full rule-based mapping from narrative topic to ticker basket, shown so the asset-selection logic is transparent.
+
 ## Data Shape
+
+Source: https://huggingface.co/datasets/chrissoria/trump-truth-social/viewer/default/train?p=4
 
 The project keeps the dataset as row-level post events. The full files contain many ticker and return columns, so the table below shows the main column groups rather than every field.
 Small 20-row Parquet samples are included under `data-sample/` so readers can inspect representative schemas without downloading the full local datasets. These samples filter out rows with blank key text fields; classified samples use successful `classification_status = ok` rows.
@@ -46,23 +65,6 @@ Small 20-row Parquet samples are included under `data-sample/` so readers can in
 See `data-sample/README.md` for the exact sample files, including the `classified_events_gpt5mini_full` artifact before ticker-selection enrichment.
 
 The LLM does not see the full dataframe. During classification, only `cleaned_text` is sent to the model, in batches of 10 posts. During retrieval, ChromaDB stores only the retrieval-text embedding plus lightweight metadata; DuckDB later joins the retrieved `post_id`s back to `classified_events.parquet` to recover the full structured row and market-return columns.
-
-## Frontend Walkthrough
-
-The React frontend is a lightweight analyst workspace on top of the FastAPI retrieval endpoint. A user enters a market narrative question, chooses how many similar posts to retrieve, and receives the matched posts, topic-derived ticker basket, and same-day market reaction summary in one view.
-
-![Similar event analysis UI](reports/frontend/similar_event_analysis.png)
-
-What the main panels show:
-
-- Query bar: the natural-language market narrative to search, plus `Top K`, the number of similar historical posts to retrieve.
-- Example queries: quick prompts for common narrative themes such as tariffs, oil and energy, defense spending, and rates.
-- Analysis: a deterministic summary of retrieved post count, dominant retrieved topic, guardrail decision, and the tickers used for return analysis.
-- Similar Posts: the ChromaDB nearest-neighbor results, ordered by similarity score, with date, classified topic, score, and cleaned display text.
-- Selected Tickers: the ticker basket mapped from the retrieved topics. The LLM does not choose these tickers; they come from the rule-based topic map.
-- Market Reaction: average and median daily open-to-close returns for each selected ticker across the retrieved sample. `N` is the number of retrieved posts with usable return data for that ticker.
-- Topic Map: the full rule-based mapping from narrative topic to ticker basket, shown so the asset-selection logic is transparent.
-
 
 ## Run the ETL
 

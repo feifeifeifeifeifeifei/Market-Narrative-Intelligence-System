@@ -139,6 +139,7 @@ def test_analyze_similar_events_returns_joined_posts_and_market_reactions(tmp_pa
     ).to_parquet(events_path, index=False)
 
     def fake_search(**kwargs):
+        assert kwargs["filters"] == {}
         return [
             {"post_id": "2", "score": 0.95, "distance": 0.05},
             {"post_id": "1", "score": 0.90, "distance": 0.10},
@@ -152,6 +153,7 @@ def test_analyze_similar_events_returns_joined_posts_and_market_reactions(tmp_pa
     )
 
     assert result["query_type"] == "similar_event_analysis"
+    assert result["filters"] == {}
     assert result["retrieved_count"] == 2
     assert result["similar_posts"][0]["post_id"] == "2"
     assert result["selected_topics"] == [{"primary_topic": "tariff_trade", "count": 2}]
@@ -218,6 +220,26 @@ def test_analyze_similar_events_empty_search_shape(tmp_path) -> None:
     assert result["similar_posts"] == []
     assert result["market_reaction"] == []
     assert result["summary"] == 'No similar posts were retrieved for "nothing".'
+
+
+def test_analyze_similar_events_passes_filters_to_search(tmp_path) -> None:
+    pytest.importorskip("duckdb")
+    events_path = tmp_path / "events.parquet"
+    pd.DataFrame({"post_id": ["1"], "cleaned_text": ["hello"]}).to_parquet(events_path, index=False)
+
+    def fake_search(**kwargs):
+        assert kwargs["top_k"] is None
+        assert kwargs["filters"] == {"primary_topic": "war_defense", "tone": "aggressive"}
+        return []
+
+    result = analyze_similar_events(
+        "war defense",
+        events_path=events_path,
+        filters={"primary_topic": "war_defense", "tone": "aggressive", "market_relevance": ""},
+        search_fn=fake_search,
+    )
+
+    assert result["filters"] == {"primary_topic": "war_defense", "tone": "aggressive"}
 
 
 def test_analyze_similar_events_validates_query_and_top_k(tmp_path) -> None:

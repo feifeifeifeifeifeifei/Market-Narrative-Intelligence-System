@@ -13,10 +13,10 @@ from src.analytics import analyze_similar_events
 from src.build_chroma import get_chroma_client, get_collection
 from src.config import CHROMA_COLLECTION_NAME, CHROMA_DB_DIR, CLASSIFIED_EVENTS_PATH
 from src.guardrails import classify_question
+from src.schemas import MarketRelevance, PolicyDirection, Tone
 from src.ticker_mapping import TOPIC_TO_TICKERS
 
 
-DEFAULT_TOP_K = 20
 MAX_API_TOP_K = 50
 API_EMBEDDING_PROVIDER = os.getenv("API_EMBEDDING_PROVIDER", "openai")
 logger = logging.getLogger(__name__)
@@ -25,7 +25,10 @@ CHROMA_LOCK = threading.Lock()
 
 class AnalyzeRequest(BaseModel):
     question: str = Field(min_length=1)
-    top_k: int = Field(default=DEFAULT_TOP_K, ge=1, le=MAX_API_TOP_K)
+    top_k: int | None = Field(default=None, ge=1, le=MAX_API_TOP_K)
+    tone: Tone | None = None
+    market_relevance: MarketRelevance | None = None
+    policy_direction: PolicyDirection | None = None
 
 
 class HealthResponse(BaseModel):
@@ -44,6 +47,7 @@ class SimilarPostResponse(BaseModel):
     similarity_score: float | None = None
     primary_topic: str | None = None
     tone: str | None = None
+    market_relevance: str | None = None
     policy_direction: str | None = None
 
 
@@ -53,7 +57,9 @@ class AnalyzeResponse(BaseModel):
     guardrail_decision: str
     redacted_question: str
     selected_topic: str | None
+    selected_topics: list[dict[str, Any]] = Field(default_factory=list)
     selected_tickers: list[str]
+    filters: dict[str, str] = Field(default_factory=dict)
     similar_posts: list[SimilarPostResponse]
     market_reaction: list[dict[str, Any]]
     retrieved_count: int | None = None
@@ -95,14 +101,23 @@ def create_app() -> FastAPI:
     def topics() -> dict[str, list[str]]:
         return TOPIC_TO_TICKERS
 
+    @app.get("/api/filter-options")
+    def filter_options() -> dict[str, list[str]]:
+        return {
+            "tone": [item.value for item in Tone],
+            "market_relevance": [item.value for item in MarketRelevance],
+            "policy_direction": [item.value for item in PolicyDirection],
+        }
+
     @app.post("/api/analyze", response_model=AnalyzeResponse)
     def analyze(request: AnalyzeRequest) -> AnalyzeResponse:
         guardrail = classify_question(request.question)
         logger.info(
-            "analyze decision=%s redacted_question=%s top_k=%d",
+            "analyze decision=%s redacted_question=%s top_k=%s filters=%s",
             guardrail.decision,
             guardrail.redacted_question,
             request.top_k,
+            request_filters(request),
         )
         if guardrail.decision != "in_scope":
             return AnalyzeResponse(
@@ -111,7 +126,9 @@ def create_app() -> FastAPI:
                 guardrail_decision=guardrail.decision,
                 redacted_question=guardrail.redacted_question,
                 selected_topic=None,
+                selected_topics=[],
                 selected_tickers=[],
+                filters=request_filters(request),
                 similar_posts=[],
                 market_reaction=[],
             )
@@ -121,6 +138,7 @@ def create_app() -> FastAPI:
                 result = analyze_similar_events(
                     query=guardrail.redacted_question,
                     top_k=request.top_k,
+                    filters=request_filters(request),
                     embedding_provider_kind=API_EMBEDDING_PROVIDER,
                 )
         except FileNotFoundError as exc:
@@ -156,13 +174,24 @@ def create_app() -> FastAPI:
             guardrail_decision=guardrail.decision,
             redacted_question=guardrail.redacted_question,
             selected_topic=selected_topic,
+            selected_topics=result.get("selected_topics", []),
             selected_tickers=result["selected_tickers"],
+            filters=result.get("filters", request_filters(request)),
             similar_posts=slim_similar_posts(result["similar_posts"]),
             market_reaction=result["market_reaction"],
             retrieved_count=result["retrieved_count"],
         )
 
     return app
+
+
+def request_filters(request: AnalyzeRequest) -> dict[str, str]:
+    values = {
+        "tone": request.tone,
+        "market_relevance": request.market_relevance,
+        "policy_direction": request.policy_direction,
+    }
+    return {field: value.value for field, value in values.items() if value is not None}
 
 
 def slim_similar_posts(posts: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -174,6 +203,7 @@ def slim_similar_posts(posts: list[dict[str, Any]]) -> list[dict[str, Any]]:
             "similarity_score": post.get("similarity_score"),
             "primary_topic": post.get("primary_topic"),
             "tone": post.get("tone"),
+            "market_relevance": post.get("market_relevance"),
             "policy_direction": post.get("policy_direction"),
         }
         for post in posts

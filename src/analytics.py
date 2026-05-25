@@ -254,21 +254,31 @@ def build_summary(query: str, events: pd.DataFrame, market_reaction: list[dict[s
     )
 
 
+def normalize_analysis_filters(filters: dict[str, str] | None) -> dict[str, str]:
+    return {
+        field: str(value).strip()
+        for field, value in (filters or {}).items()
+        if str(value).strip() and str(value).strip().lower() != "all"
+    }
+
+
 def analyze_similar_events(
     query: str,
-    top_k: int = 20,
+    top_k: int | None = None,
     events_path: Path = CLASSIFIED_EVENTS_PATH,
     search_fn: SearchFunction = search_similar_posts,
+    filters: dict[str, str] | None = None,
     **search_kwargs: Any,
 ) -> dict[str, Any]:
     if not query.strip():
         raise ValueError("Search query must not be empty.")
-    if top_k < 1:
+    if top_k is not None and top_k < 1:
         raise ValueError("top_k must be at least 1.")
-    if top_k > MAX_TOP_K:
+    if top_k is not None and top_k > MAX_TOP_K:
         raise ValueError(f"top_k must be at most {MAX_TOP_K}.")
 
-    search_results = search_fn(query=query, top_k=top_k, **search_kwargs)
+    normalized_filters = normalize_analysis_filters(filters)
+    search_results = search_fn(query=query, top_k=top_k, filters=normalized_filters, **search_kwargs)
     events = fetch_events_by_post_id(search_results, events_path=events_path)
     reactions = market_reaction_summary(events)
     similar_posts = similar_posts_table(events)
@@ -278,6 +288,7 @@ def analyze_similar_events(
         "query": query,
         "query_type": "similar_event_analysis",
         "top_k": top_k,
+        "filters": normalized_filters,
         "retrieved_count": len(similar_posts),
         "selected_topics": selected_topic_counts(events),
         "selected_tickers": selected_ticker_union(events),
