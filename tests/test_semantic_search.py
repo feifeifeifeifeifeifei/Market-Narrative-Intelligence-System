@@ -62,3 +62,55 @@ def test_provider_mismatch_raises_clear_error() -> None:
 
     with pytest.raises(ValueError, match="Embedding provider mismatch"):
         validate_embedding_provider_matches_collection(provider, collection)
+
+
+def test_normalize_query_results_adds_embedding_key_when_present() -> None:
+    """Test that normalize_query_results includes embedding key with list values."""
+    raw = {
+        "ids": [["1"]],
+        "documents": [["China tariffs"]],
+        "metadatas": [[{"primary_topic": "tariff_trade"}]],
+        "distances": [[0.1]],
+        "embeddings": [[[0.1, 0.2, 0.3, 0.4]]],
+    }
+
+    result = normalize_query_results(raw)
+
+    assert len(result) == 1
+    assert result[0]["embedding"] == [0.1, 0.2, 0.3, 0.4]
+
+
+def test_normalize_query_results_embedding_is_none_when_absent() -> None:
+    """Test backward compatibility: embedding is None when not in raw results."""
+    raw = {
+        "ids": [["1"]],
+        "documents": [["Oil policy"]],
+        "metadatas": [[{"primary_topic": "oil_energy"}]],
+        "distances": [[0.2]],
+    }
+
+    result = normalize_query_results(raw)
+
+    assert len(result) == 1
+    assert result[0]["embedding"] is None
+
+
+def test_normalize_query_results_converts_numpy_arrays_to_list() -> None:
+    """Test that numpy arrays in embeddings are safely converted to lists."""
+    import numpy as np
+    
+    raw = {
+        "ids": [["1", "2"]],
+        "documents": [["Text 1", "Text 2"]],
+        "metadatas": [[{}, {}]],
+        "distances": [[0.1, 0.2]],
+        "embeddings": [[np.array([0.5, 0.6, 0.7]), np.array([0.8, 0.9, 1.0])]],
+    }
+
+    result = normalize_query_results(raw)
+
+    assert len(result) == 2
+    assert result[0]["embedding"] == [0.5, 0.6, 0.7]
+    assert result[1]["embedding"] == [0.8, 0.9, 1.0]
+    assert isinstance(result[0]["embedding"], list)
+    assert isinstance(result[1]["embedding"], list)

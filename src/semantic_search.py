@@ -47,7 +47,7 @@ def search_similar_posts(
     raw_results = collection.query(
         query_embeddings=[query_embedding],
         n_results=n_results,
-        include=["documents", "metadatas", "distances"],
+        include=["documents", "metadatas", "distances", "embeddings"],
         **({"where": where_filter} if where_filter else {}),
     )
     return normalize_query_results(raw_results)
@@ -91,11 +91,13 @@ def normalize_query_results(raw_results: dict[str, Any]) -> list[dict[str, Any]]
     documents = first_result_list(raw_results, "documents")
     metadatas = first_result_list(raw_results, "metadatas")
     distances = first_result_list(raw_results, "distances")
+    embeddings = first_embedding_list(raw_results, "embeddings")
 
     normalized: list[dict[str, Any]] = []
     for index, post_id in enumerate(ids):
         distance = distances[index] if index < len(distances) else None
         metadata = metadatas[index] if index < len(metadatas) and metadatas[index] else {}
+        embedding = embeddings[index] if index < len(embeddings) else None
         normalized.append(
             {
                 "post_id": post_id,
@@ -103,6 +105,7 @@ def normalize_query_results(raw_results: dict[str, Any]) -> list[dict[str, Any]]
                 "distance": distance,
                 "cleaned_text": documents[index] if index < len(documents) else "",
                 "metadata": metadata,
+                "embedding": embedding,
             }
         )
     return normalized
@@ -113,6 +116,27 @@ def first_result_list(raw_results: dict[str, Any], key: str) -> list[Any]:
     if not values:
         return []
     return values[0] or []
+
+
+def to_float_list(embedding: Any) -> list[float] | None:
+    if embedding is None:
+        return None
+    try:
+        if hasattr(embedding, "tolist"):
+            return embedding.tolist()
+        return [float(x) for x in embedding]
+    except (TypeError, ValueError):
+        return None
+
+
+def first_embedding_list(raw_results: dict[str, Any], key: str) -> list[list[float] | None]:
+    values = raw_results.get(key)
+    if values is None or len(values) == 0:
+        return []
+    embeddings = values[0]
+    if embeddings is None or (isinstance(embeddings, list) and len(embeddings) == 0):
+        return []
+    return [to_float_list(emb) for emb in embeddings]
 
 
 def parse_args() -> argparse.Namespace:
