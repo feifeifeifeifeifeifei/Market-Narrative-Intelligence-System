@@ -266,3 +266,55 @@ def test_json_safe_serializes_numpy_scalars() -> None:
     assert json_safe(np.float64(1.5)) == 1.5
     assert json_safe(np.float64(np.nan)) is None
     assert json_safe(np.bool_(True)) is True
+
+
+def test_analyze_similar_events_clusters_and_excludes_noise(tmp_path) -> None:
+    pytest.importorskip("duckdb")
+    events_path = tmp_path / "events.parquet"
+    pd.DataFrame(
+        {
+            "post_id": ["1", "2", "3"],
+            "date": pd.to_datetime(["2026-01-01", "2026-01-02", "2026-01-03"]),
+            "cleaned_text": ["China tariffs", "China tariff threat", "Unrelated outlier"],
+            "primary_topic": ["tariff_trade", "tariff_trade", "other"],
+            "selected_tickers": ["SP500", "SP500", "GLD"],
+            "sp500_daily_return": [0.01, 0.03, 0.99],
+            "gld_daily_return": [0.0, 0.0, 0.99],
+        }
+    ).to_parquet(events_path, index=False)
+
+    def fake_search(**kwargs):
+        return [
+            {"post_id": "1", "score": 0.95, "distance": 0.05, "embedding": [1.0, 0.0], "metadata": {"primary_topic": "tariff_trade"}},
+            {"post_id": "2", "score": 0.90, "distance": 0.10, "embedding": [0.99, 0.02], "metadata": {"primary_topic": "tariff_trade"}},
+            {"post_id": "3", "score": 0.20, "distance": 0.80, "embedding": [-1.0, 0.0], "metadata": {"primary_topic": "other"}},
+        ]
+
+    result = analyze_similar_events(
+        "China tariffs",
+        top_k=3,
+        events_path=events_path,
+        search_fn=fake_search,
+        eps=0.1,
+        min_samples=2,
+    )
+
+    assert result["clustering_applied"] is True
+    assert result["noise_count"] == 1
+    assert result["retrieved_count"] == 3
+    assert result["analyzed_count"] == 2
+    assert result["selected_topics"] == [{"primary_topic": "tariff_trade", "count": 2}]
+    assert result["selected_tickers"] == ["SP500"]
+    assert result["market_reaction"][0]["ticker"] == "SP500"
+    assert result["market_reaction"][0]["avg_daily_return"] == pytest.approx(0.02)
+    assert len(result["narratives"]) == 1
+    assert result["narratives"][0]["dominant_topic"] == "tariff_trade"
+
+    posts = {post["post_id"]: post for post in result["similar_posts"]}
+    assert posts["3"]["is_noise"] is True
+    assert posts["1"]["is_noise"] is False
+    assert posts["1"]["cluster_label"] == 0
+
+    import json
+
+    json.dumps(result)

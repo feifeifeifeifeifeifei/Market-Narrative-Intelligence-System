@@ -10,7 +10,8 @@ from typing import Any
 
 import pandas as pd
 
-from src.config import CLASSIFIED_EVENTS_PATH, TICKERS
+from src.clustering import NOISE_LABEL, cluster_search_results
+from src.config import CLASSIFIED_EVENTS_PATH, DBSCAN_MIN_SAMPLES, TICKERS
 from src.semantic_search import search_similar_posts
 from src.ticker_mapping import return_column_for_ticker, selected_tickers_for_topic
 
@@ -36,6 +37,8 @@ SIMILAR_POST_COLUMNS = [
     "selected_return_columns",
     "total_engagement",
     "classification_status",
+    "cluster_label",
+    "is_noise",
 ]
 RETURN_COLUMNS = [return_column_for_ticker(ticker) for ticker in TICKERS]
 RETRIEVED_TABLE_COLUMNS = [*SIMILAR_POST_COLUMNS, *RETURN_COLUMNS]
@@ -262,12 +265,38 @@ def normalize_analysis_filters(filters: dict[str, str] | None) -> dict[str, str]
     }
 
 
+def attach_cluster_labels(
+    events: pd.DataFrame,
+    search_results: list[dict[str, Any]],
+    outcome: Any,
+) -> pd.DataFrame:
+    result = events.copy()
+    label_by_id: dict[str, Any] = {}
+    noise_by_id: dict[str, bool] = {}
+    for search_result, label in zip(search_results, outcome.labels):
+        post_id = str(search_result.get("post_id"))
+        label_by_id[post_id] = label
+        noise_by_id[post_id] = label == NOISE_LABEL
+
+    if "post_id" in result.columns:
+        ids = result["post_id"].astype(str)
+        result["cluster_label"] = ids.map(label_by_id)
+        result["is_noise"] = ids.map(noise_by_id).fillna(False).astype(bool)
+    else:
+        result["cluster_label"] = None
+        result["is_noise"] = False
+    return result
+
+
 def analyze_similar_events(
     query: str,
     top_k: int | None = None,
     events_path: Path = CLASSIFIED_EVENTS_PATH,
     search_fn: SearchFunction = search_similar_posts,
     filters: dict[str, str] | None = None,
+    cluster: bool = True,
+    eps: float | None = None,
+    min_samples: int = DBSCAN_MIN_SAMPLES,
     **search_kwargs: Any,
 ) -> dict[str, Any]:
     if not query.strip():
@@ -279,8 +308,20 @@ def analyze_similar_events(
 
     normalized_filters = normalize_analysis_filters(filters)
     search_results = search_fn(query=query, top_k=top_k, filters=normalized_filters, **search_kwargs)
+    outcome = (
+        cluster_search_results(search_results, eps=eps, min_samples=min_samples)
+        if cluster
+        else cluster_search_results([])
+    )
     events = fetch_events_by_post_id(search_results, events_path=events_path)
-    reactions = market_reaction_summary(events)
+    events = attach_cluster_labels(events, search_results, outcome)
+
+    if "is_noise" in events.columns and len(events):
+        core_events = events[~events["is_noise"].astype(bool)]
+    else:
+        core_events = events
+
+    reactions = market_reaction_summary(core_events)
     similar_posts = similar_posts_table(events)
     retrieved_table = retrieved_post_table(events)
 
@@ -290,12 +331,16 @@ def analyze_similar_events(
         "top_k": top_k,
         "filters": normalized_filters,
         "retrieved_count": len(similar_posts),
-        "selected_topics": selected_topic_counts(events),
-        "selected_tickers": selected_ticker_union(events),
+        "analyzed_count": int(len(core_events)),
+        "selected_topics": selected_topic_counts(core_events),
+        "selected_tickers": selected_ticker_union(core_events),
         "similar_posts": similar_posts,
         "market_reaction": reactions,
         "retrieved_post_table": retrieved_table,
-        "summary": build_summary(query, events, reactions),
+        "narratives": outcome.narratives,
+        "noise_count": outcome.noise_count,
+        "clustering_applied": outcome.clustering_applied,
+        "summary": build_summary(query, core_events, reactions),
     }
 
 
