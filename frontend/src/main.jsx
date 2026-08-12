@@ -155,9 +155,14 @@ function App() {
       <section className="workspace">
         <div className="main-column">
           <SummaryPanel result={result} loading={loading} />
-          <SimilarPosts posts={result?.similar_posts || []} hasResult={Boolean(result && result.query_type !== 'refusal')} />
+          <SimilarPosts
+            posts={result?.similar_posts || []}
+            hasResult={Boolean(result && result.query_type !== 'refusal')}
+            clusteringApplied={Boolean(result?.clustering_applied)}
+          />
         </div>
         <aside className="side-column">
+          <NarrativesPanel narratives={result?.narratives || []} noiseCount={result?.noise_count || 0} />
           <TickerPanel tickers={result?.selected_tickers || []} selectedTopics={result?.selected_topics || []} />
           <MarketReaction rows={result?.market_reaction || []} />
           <TopicMap rows={topicRows} />
@@ -244,26 +249,112 @@ function MarketReaction({ rows }) {
   );
 }
 
-function SimilarPosts({ posts, hasResult }) {
+function SimilarPosts({ posts, hasResult, clusteringApplied }) {
+  if (!posts.length) {
+    return (
+      <section className="panel">
+        <header><Search size={18} /><h2>Similar Posts</h2></header>
+        <p className="muted">{hasResult ? 'No posts matched this query.' : 'No retrieved posts yet.'}</p>
+      </section>
+    );
+  }
+
+  if (!clusteringApplied) {
+    return (
+      <section className="panel">
+        <header><Search size={18} /><h2>Similar Posts</h2></header>
+        <div className="post-list">
+          {posts.map((post) => <PostRow key={post.post_id} post={post} />)}
+        </div>
+      </section>
+    );
+  }
+
+  const { clusters, noise } = groupByCluster(posts);
   return (
     <section className="panel">
-      <header><Search size={18} /><h2>Similar Posts</h2></header>
-      <div className="post-list">
-        {posts.length ? posts.map((post) => (
-          <article className="post-row" key={post.post_id}>
-            <div className="post-meta">
-              <span>{formatDate(post.date)}</span>
-              <span>{post.primary_topic}</span>
-              {post.tone && <span>{post.tone}</span>}
-              {post.policy_direction && <span>{post.policy_direction}</span>}
-              <span>{score(post.similarity_score)}</span>
-            </div>
-            <p>{post.cleaned_text}</p>
-          </article>
-        )) : <p className="muted">{hasResult ? 'No posts matched this query.' : 'No retrieved posts yet.'}</p>}
-      </div>
+      <header><Search size={18} /><h2>Similar Posts by Narrative</h2></header>
+      {clusters.map(([label, group]) => (
+        <div className="cluster-block" key={label}>
+          <div className="cluster-head">
+            <span className="cluster-tag">Narrative {Number(label) + 1}</span>
+            <small>{group[0].primary_topic} · {group.length} posts</small>
+          </div>
+          <div className="post-list">
+            {group.map((post) => <PostRow key={post.post_id} post={post} />)}
+          </div>
+        </div>
+      ))}
+      {noise.length > 0 && (
+        <div className="cluster-block noise-block">
+          <div className="cluster-head">
+            <span className="cluster-tag noise">Outliers</span>
+            <small>excluded from aggregates · {noise.length} posts</small>
+          </div>
+          <div className="post-list">
+            {noise.map((post) => <PostRow key={post.post_id} post={post} />)}
+          </div>
+        </div>
+      )}
     </section>
   );
+}
+
+function PostRow({ post }) {
+  return (
+    <article className={`post-row${post.is_noise ? ' noise' : ''}`}>
+      <div className="post-meta">
+        <span>{formatDate(post.date)}</span>
+        <span>{post.primary_topic}</span>
+        {post.tone && <span>{post.tone}</span>}
+        {post.policy_direction && <span>{post.policy_direction}</span>}
+        <span>{score(post.similarity_score)}</span>
+      </div>
+      <p>{post.cleaned_text}</p>
+    </article>
+  );
+}
+
+function NarrativesPanel({ narratives, noiseCount }) {
+  if (!narratives.length) return null;
+  return (
+    <section className="panel">
+      <header><Brain size={18} /><h2>Narratives</h2></header>
+      <div className="narrative-list">
+        {narratives.map((narrative) => (
+          <div className="narrative-row" key={narrative.cluster_id}>
+            <div className="narrative-top">
+              <span>{narrative.dominant_topic || 'mixed'}</span>
+              <small>{narrative.size} posts · avg {score(narrative.avg_similarity)}</small>
+            </div>
+            <p className="muted">{narrative.representative_text}</p>
+          </div>
+        ))}
+      </div>
+      {noiseCount > 0 && <p className="mini-label">Outliers excluded: {noiseCount}</p>}
+    </section>
+  );
+}
+
+function groupByCluster(posts) {
+  const clusterMap = new Map();
+  const noise = [];
+  for (const post of posts) {
+    if (post.is_noise || post.cluster_label === null || post.cluster_label === undefined) {
+      if (post.is_noise) noise.push(post);
+      else pushToCluster(clusterMap, post);
+      continue;
+    }
+    pushToCluster(clusterMap, post);
+  }
+  const clusters = [...clusterMap.entries()].sort((a, b) => Number(a[0]) - Number(b[0]));
+  return { clusters, noise };
+}
+
+function pushToCluster(clusterMap, post) {
+  const key = post.cluster_label ?? 0;
+  if (!clusterMap.has(key)) clusterMap.set(key, []);
+  clusterMap.get(key).push(post);
 }
 
 function TopicMap({ rows }) {
