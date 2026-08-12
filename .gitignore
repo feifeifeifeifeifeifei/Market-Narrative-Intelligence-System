@@ -11,3 +11,4 @@ reports/powerbi/tables/*.csv
 frontend/node_modules/
 frontend/dist/
 *.py[cod]
+docs/superpowers/
