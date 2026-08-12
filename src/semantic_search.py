@@ -91,7 +91,7 @@ def normalize_query_results(raw_results: dict[str, Any]) -> list[dict[str, Any]]
     documents = first_result_list(raw_results, "documents")
     metadatas = first_result_list(raw_results, "metadatas")
     distances = first_result_list(raw_results, "distances")
-    embeddings = first_embedding_list(raw_results, "embeddings")
+    embeddings = first_embedding_list(raw_results)
 
     normalized: list[dict[str, Any]] = []
     for index, post_id in enumerate(ids):
@@ -105,7 +105,7 @@ def normalize_query_results(raw_results: dict[str, Any]) -> list[dict[str, Any]]
                 "distance": distance,
                 "cleaned_text": documents[index] if index < len(documents) else "",
                 "metadata": metadata,
-                "embedding": embedding,
+                "embedding": to_float_list(embedding),
             }
         )
     return normalized
@@ -121,22 +121,17 @@ def first_result_list(raw_results: dict[str, Any], key: str) -> list[Any]:
 def to_float_list(embedding: Any) -> list[float] | None:
     if embedding is None:
         return None
-    try:
-        if hasattr(embedding, "tolist"):
-            return embedding.tolist()
-        return [float(x) for x in embedding]
-    except (TypeError, ValueError):
-        return None
+    if hasattr(embedding, "tolist"):
+        embedding = embedding.tolist()
+    return [float(value) for value in embedding]
 
 
-def first_embedding_list(raw_results: dict[str, Any], key: str) -> list[list[float] | None]:
-    values = raw_results.get(key)
+def first_embedding_list(raw_results: dict[str, Any]) -> list[Any]:
+    values = raw_results.get("embeddings")
     if values is None or len(values) == 0:
         return []
-    embeddings = values[0]
-    if embeddings is None or (isinstance(embeddings, list) and len(embeddings) == 0):
-        return []
-    return [to_float_list(emb) for emb in embeddings]
+    first = values[0]
+    return list(first) if first is not None else []
 
 
 def parse_args() -> argparse.Namespace:
