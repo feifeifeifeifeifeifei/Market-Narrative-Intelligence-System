@@ -177,6 +177,8 @@ python -m src.analytics "China tariff threats" --top-k 20 --embedding-provider o
 
 This runs the M5 flow: semantic search returns ranked `post_id`s, DuckDB joins those ids back to `classified_events.parquet`, and the analytics layer computes average and median daily open-to-close returns for the tickers selected by the deterministic topic mapping.
 
+Retrieved posts are then grouped into narratives at query time: `src.clustering` runs an in-house DBSCAN (no `sklearn` dependency) over the cosine distance between the embeddings ChromaDB already returns for the retrieved posts, so this adds no re-embedding and no re-classification, just a pass over vectors already in the collection. Posts that don't fit a dense cluster are flagged as noise and left out of the topic mix, ticker basket, and market-reaction aggregates, but they still appear in the similar-posts list so nothing silently disappears. `analyze_similar_events` and the `POST /api/analyze` endpoint expose this as `narratives`, `noise_count`, and `clustering_applied`, and each similar post carries a `cluster_label` (`null` when unclustered) and an `is_noise` flag. The clustering constants (`DBSCAN_MIN_SAMPLES`, `DBSCAN_EPS_QUANTILE`, `DBSCAN_EPS_FLOOR`, `DBSCAN_EPS_CEIL`, `CLUSTER_REP_TEXT_MAXLEN`) live in `src/config.py` and are tunable defaults meant to be recalibrated against the live index rather than fixed constants.
+
 ## Build Dashboard Assets
 
 ```bash
