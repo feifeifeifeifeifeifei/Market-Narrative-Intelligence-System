@@ -136,6 +136,7 @@ def create_app() -> FastAPI:
                 filters=request_filters(request),
                 similar_posts=[],
                 market_reaction=[],
+                noise_count=0,
             )
 
         try:

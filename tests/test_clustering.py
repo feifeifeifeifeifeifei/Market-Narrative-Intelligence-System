@@ -42,6 +42,22 @@ def test_dbscan_all_noise_when_eps_too_small():
     assert labels == [NOISE_LABEL, NOISE_LABEL, NOISE_LABEL]
 
 
+def test_dbscan_reclaims_border_point_from_noise_at_min_samples_3():
+    # Point 0 is visited first and marked noise (only 2 neighbors < min_samples=3).
+    # Point 1 is the sole core point; its BFS must reclaim points 0 and 2 as
+    # border members, so no point stays noise.
+    D = np.array(
+        [
+            [0.0, 0.05, 0.9],
+            [0.05, 0.0, 0.05],
+            [0.9, 0.05, 0.0],
+        ]
+    )
+    labels = dbscan_labels(D, eps=0.1, min_samples=3)
+    assert labels == [0, 0, 0]
+    assert NOISE_LABEL not in labels
+
+
 def test_adaptive_eps_reflects_knn_distance():
     D = np.array(
         [
