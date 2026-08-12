@@ -55,3 +55,10 @@ TICKERS = [
     "tlt",
     "uup",
 ]
+
+# DBSCAN narrative clustering (query-time, over retrieved results)
+DBSCAN_MIN_SAMPLES = 2
+DBSCAN_EPS_QUANTILE = 0.6
+DBSCAN_EPS_FLOOR = 0.05
+DBSCAN_EPS_CEIL = 0.80
+CLUSTER_REP_TEXT_MAXLEN = 240
