@@ -259,7 +259,10 @@ function SimilarPosts({ posts, hasResult, clusteringApplied }) {
     );
   }
 
-  if (!clusteringApplied) {
+  const allLabeled = posts.every(
+    (post) => post.cluster_label !== null && post.cluster_label !== undefined,
+  );
+  if (!clusteringApplied || !allLabeled) {
     return (
       <section className="panel">
         <header><Search size={18} /><h2>Similar Posts</h2></header>
