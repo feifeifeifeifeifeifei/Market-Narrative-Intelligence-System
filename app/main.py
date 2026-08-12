@@ -49,6 +49,8 @@ class SimilarPostResponse(BaseModel):
     tone: str | None = None
     market_relevance: str | None = None
     policy_direction: str | None = None
+    cluster_label: int | None = None
+    is_noise: bool = False
 
 
 class AnalyzeResponse(BaseModel):
@@ -63,6 +65,9 @@ class AnalyzeResponse(BaseModel):
     similar_posts: list[SimilarPostResponse]
     market_reaction: list[dict[str, Any]]
     retrieved_count: int | None = None
+    narratives: list[dict[str, Any]] = Field(default_factory=list)
+    noise_count: int | None = None
+    clustering_applied: bool = False
 
 
 def create_app() -> FastAPI:
@@ -180,6 +185,9 @@ def create_app() -> FastAPI:
             similar_posts=slim_similar_posts(result["similar_posts"]),
             market_reaction=result["market_reaction"],
             retrieved_count=result["retrieved_count"],
+            narratives=result.get("narratives", []),
+            noise_count=result.get("noise_count"),
+            clustering_applied=result.get("clustering_applied", False),
         )
 
     return app
@@ -205,6 +213,8 @@ def slim_similar_posts(posts: list[dict[str, Any]]) -> list[dict[str, Any]]:
             "tone": post.get("tone"),
             "market_relevance": post.get("market_relevance"),
             "policy_direction": post.get("policy_direction"),
+            "cluster_label": post.get("cluster_label"),
+            "is_noise": bool(post.get("is_noise", False)),
         }
         for post in posts
     ]

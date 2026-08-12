@@ -114,3 +114,43 @@ def test_analyze_returns_friendly_runtime_error(monkeypatch) -> None:
 
     assert response.status_code == 503
     assert response.json()["detail"] == "Analysis backend is not ready. Check ChromaDB, DuckDB, and data files."
+
+
+def test_analyze_returns_clustering_fields(monkeypatch) -> None:
+    def fake_analyze_similar_events(**kwargs):
+        return {
+            "summary": "Retrieved 2 similar posts.",
+            "query_type": "similar_event_analysis",
+            "filters": {},
+            "selected_topics": [{"primary_topic": "tariff_trade", "count": 2}],
+            "selected_tickers": ["SP500"],
+            "similar_posts": [
+                {"post_id": "1", "date": "2026-01-01", "cleaned_text": "a", "similarity_score": 0.9,
+                 "primary_topic": "tariff_trade", "tone": "threatening", "market_relevance": "high",
+                 "policy_direction": "escalation", "cluster_label": 0, "is_noise": False},
+                {"post_id": "2", "date": "2026-01-02", "cleaned_text": "b", "similarity_score": 0.2,
+                 "primary_topic": "other", "tone": "neutral", "market_relevance": "low",
+                 "policy_direction": "neutral", "cluster_label": -1, "is_noise": True},
+            ],
+            "market_reaction": [],
+            "retrieved_count": 2,
+            "analyzed_count": 1,
+            "narratives": [{"cluster_id": 0, "size": 1, "dominant_topic": "tariff_trade",
+                            "avg_similarity": 0.9, "representative_post_id": "1",
+                            "representative_text": "a", "post_ids": ["1"]}],
+            "noise_count": 1,
+            "clustering_applied": True,
+        }
+
+    monkeypatch.setattr(api, "analyze_similar_events", fake_analyze_similar_events)
+    client = TestClient(api.app)
+
+    response = client.post("/api/analyze", json={"question": "China tariff market reaction"})
+    body = response.json()
+
+    assert response.status_code == 200
+    assert body["clustering_applied"] is True
+    assert body["noise_count"] == 1
+    assert body["narratives"][0]["dominant_topic"] == "tariff_trade"
+    assert body["similar_posts"][0]["cluster_label"] == 0
+    assert body["similar_posts"][1]["is_noise"] is True
