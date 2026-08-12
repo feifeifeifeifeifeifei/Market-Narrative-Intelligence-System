@@ -60,3 +60,82 @@ def test_adaptive_eps_respects_floor_and_ceil():
     big = np.full((3, 3), 2.0)
     np.fill_diagonal(big, 0.0)
     assert adaptive_eps(big, min_samples=2, quantile=0.5, floor=0.05, ceil=0.8) == 0.8
+
+
+from src.clustering import ClusterOutcome, cluster_search_results
+
+
+def _result(post_id, embedding, topic, score):
+    return {
+        "post_id": post_id,
+        "embedding": embedding,
+        "score": score,
+        "cleaned_text": f"text for {post_id}",
+        "metadata": {"primary_topic": topic},
+    }
+
+
+def _two_cluster_results():
+    return [
+        _result("a", [1.0, 0.0], "tariff_trade", 0.90),
+        _result("b", [0.99, 0.02], "tariff_trade", 0.80),
+        _result("c", [0.0, 1.0], "oil_energy", 0.85),
+        _result("d", [0.02, 0.99], "oil_energy", 0.70),
+        _result("e", [-1.0, 0.0], "other", 0.30),
+    ]
+
+
+def test_cluster_search_results_groups_and_flags_noise():
+    outcome = cluster_search_results(_two_cluster_results(), eps=0.1, min_samples=2)
+    assert isinstance(outcome, ClusterOutcome)
+    assert outcome.clustering_applied is True
+    assert outcome.noise_count == 1
+    assert {label for label in outcome.labels if label != NOISE_LABEL} == {0, 1}
+    assert outcome.labels[4] == NOISE_LABEL
+    assert len(outcome.narratives) == 2
+
+
+def test_cluster_search_results_narratives_sorted_by_size_then_similarity():
+    outcome = cluster_search_results(_two_cluster_results(), eps=0.1, min_samples=2)
+    first = outcome.narratives[0]
+    assert first["cluster_id"] == 0
+    assert first["size"] == 2
+    assert first["dominant_topic"] == "tariff_trade"
+    assert first["representative_post_id"] == "a"
+    assert first["avg_similarity"] == pytest.approx(0.85)
+    assert first["post_ids"] == ["a", "b"]
+
+
+def test_cluster_search_results_noop_without_embeddings():
+    results = [
+        {"post_id": "a", "score": 0.9, "cleaned_text": "x", "metadata": {}},
+        {"post_id": "b", "score": 0.8, "cleaned_text": "y", "metadata": {}},
+    ]
+    outcome = cluster_search_results(results)
+    assert outcome.clustering_applied is False
+    assert outcome.labels == [None, None]
+    assert outcome.narratives == []
+    assert outcome.noise_count == 0
+
+
+def test_cluster_search_results_noop_when_too_few_points():
+    outcome = cluster_search_results([_result("a", [1.0, 0.0], "t", 0.9)], min_samples=2)
+    assert outcome.clustering_applied is False
+    assert outcome.labels == [None]
+
+
+def test_cluster_search_results_is_deterministic():
+    results = _two_cluster_results()
+    first = cluster_search_results(results, eps=0.1, min_samples=2)
+    second = cluster_search_results(results, eps=0.1, min_samples=2)
+    assert first.labels == second.labels
+
+
+def test_cluster_search_results_truncates_representative_text():
+    long_text = "x" * 500
+    results = [
+        {"post_id": "a", "embedding": [1.0, 0.0], "score": 0.9, "cleaned_text": long_text, "metadata": {"primary_topic": "t"}},
+        {"post_id": "b", "embedding": [0.99, 0.02], "score": 0.8, "cleaned_text": long_text, "metadata": {"primary_topic": "t"}},
+    ]
+    outcome = cluster_search_results(results, eps=0.1, min_samples=2)
+    assert len(outcome.narratives[0]["representative_text"]) <= 241  # 240 + ellipsis
