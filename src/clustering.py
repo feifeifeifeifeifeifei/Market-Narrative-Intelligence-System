@@ -7,6 +7,7 @@ from typing import Any
 import numpy as np
 
 from src.config import (
+    CLUSTER_MAX_POINTS,
     CLUSTER_REP_TEXT_MAXLEN,
     DBSCAN_EPS_CEIL,
     DBSCAN_EPS_FLOOR,
@@ -83,9 +84,10 @@ def cluster_search_results(
     eps: float | None = None,
     min_samples: int = DBSCAN_MIN_SAMPLES,
     eps_quantile: float = DBSCAN_EPS_QUANTILE,
+    max_points: int = CLUSTER_MAX_POINTS,
 ) -> ClusterOutcome:
     n = len(results)
-    if not _can_cluster(results, min_samples):
+    if not _can_cluster(results, min_samples, max_points):
         return ClusterOutcome(labels=[None] * n)
 
     embeddings = [list(result["embedding"]) for result in results]
@@ -103,8 +105,8 @@ def cluster_search_results(
     )
 
 
-def _can_cluster(results: list[dict[str, Any]], min_samples: int) -> bool:
-    if len(results) < min_samples:
+def _can_cluster(results: list[dict[str, Any]], min_samples: int, max_points: int) -> bool:
+    if not (min_samples <= len(results) <= max_points):
         return False
     return all(_has_embedding(result.get("embedding")) for result in results)
 

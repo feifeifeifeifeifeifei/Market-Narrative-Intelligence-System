@@ -140,6 +140,17 @@ def test_cluster_search_results_noop_when_too_few_points():
     assert outcome.labels == [None]
 
 
+def test_cluster_search_results_noop_when_too_many_points():
+    # More retrieved results than max_points -> skip clustering rather than build
+    # an O(n^2) distance matrix (guards top_k=None pulling the whole collection).
+    results = _two_cluster_results()  # 5 valid embedded results
+    outcome = cluster_search_results(results, eps=0.1, min_samples=2, max_points=3)
+    assert outcome.clustering_applied is False
+    assert outcome.labels == [None] * len(results)
+    assert outcome.narratives == []
+    assert outcome.noise_count == 0
+
+
 def test_cluster_search_results_is_deterministic():
     results = _two_cluster_results()
     first = cluster_search_results(results, eps=0.1, min_samples=2)

@@ -62,3 +62,7 @@ DBSCAN_EPS_QUANTILE = 0.6
 DBSCAN_EPS_FLOOR = 0.05
 DBSCAN_EPS_CEIL = 0.80
 CLUSTER_REP_TEXT_MAXLEN = 240
+# Query-time clustering runs on the retrieved top-K only. If a caller retrieves
+# far more (e.g. top_k=None pulls the whole collection), skip clustering rather
+# than build an O(n^2) distance matrix over thousands of points.
+CLUSTER_MAX_POINTS = 200
