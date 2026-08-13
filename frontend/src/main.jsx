@@ -16,6 +16,10 @@ import './styles.css';
 
 const API_BASE = import.meta.env.VITE_API_BASE || 'http://127.0.0.1:8000';
 
+// Retrieval is bounded so query-time clustering runs on a small top-K set
+// (the design assumes K <= 50), not the entire collection.
+const DEFAULT_TOP_K = 30;
+
 const EXAMPLES = [
   'China tariff threats and market reaction',
   'Oil energy policy posts',
@@ -59,7 +63,7 @@ function App() {
       const response = await fetch(`${API_BASE}/api/analyze`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ question, ...activeFilters(filters) }),
+        body: JSON.stringify({ question, top_k: DEFAULT_TOP_K, ...activeFilters(filters) }),
       });
       const body = await response.json();
       if (!response.ok) throw new Error(errorMessage(body.detail));
